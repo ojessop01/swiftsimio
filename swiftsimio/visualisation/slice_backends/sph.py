@@ -4,7 +4,6 @@ from numpy import float64, float32, int32, zeros, ndarray
 
 from swiftsimio.accelerated import jit, prange, NUM_THREADS
 
-
 # Taken from Dehnen & Aly 2012
 kernel_gamma = 1.936492
 kernel_constant = 21.0 * 0.31830988618379067154 / 2.0

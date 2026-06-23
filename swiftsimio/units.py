@@ -13,7 +13,6 @@ Also contains unit conversion factors, to simplify units wherever possible.
 
 import unyt
 
-
 try:
     # Need to do this first otherwise the `unyt` system freaks out about
     # us upgrading msun from a symbol

@@ -4,7 +4,6 @@ Test for extra particle types.
 
 from swiftsimio import load, metadata
 from swiftsimio import Writer
-from swiftsimio.units import cosmo_units
 import swiftsimio.metadata.particle as swp
 import swiftsimio.metadata.writer.required_fields as swmw
 import swiftsimio.metadata.unit.unit_fields as swuf
@@ -15,7 +14,6 @@ import numpy as np
 
 import os
 
-from copy import deepcopy
 
 
 def generate_units(m, l, t, I, T):
@@ -34,11 +32,11 @@ def generate_units(m, l, t, I, T):
         "particle_ids": None,
         "velocities": l / t,
         "potential": l * l / (t * t),
-        "density": m / (l ** 3),
-        "entropy": m * l ** 2 / (t ** 2 * T),
+        "density": m / (l**3),
+        "entropy": m * l**2 / (t**2 * T),
         "internal_energy": (l / t) ** 2,
         "smoothing_length": l,
-        "pressure": m / (l * t ** 2),
+        "pressure": m / (l * t**2),
         "diffusion": None,
         "sfr": m / t,
         "temperature": T,
