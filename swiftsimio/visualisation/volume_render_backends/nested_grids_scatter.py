@@ -29,8 +29,8 @@ Algorithm
 
 5. Return the finest grid.
 
-The algorithm follows Benitez-Llambay (py-sphviewer2) and the PARTRIDGE
-3-D scatter pipeline (Jessop et al.).
+The algorithm follows a novel Sparse Multi-Scale Grid algorithm 
+(as described in Benitez-Llambay 2025) to place particles on a grid using an Adaptive Mesh Refinement (AMR) approach.
 
 Resolution constraints
 ----------------------
@@ -51,19 +51,13 @@ from numba import get_num_threads, njit, prange
 # particle instead of once per visited voxel.
 _KERNEL_NORMALISATION_3D = float32(21.0 / (2.0 * np.pi))
 kernel_gamma = float32(1.936492)
+
 # ---------------------------------------------------------------------------
 # Optimised serial path
-# ---------------------------------------------------------------------------
+# --------------------------------------------------------------------------
 
 
-@njit(
-    fastmath=True,
-    cache=True,
-    nogil=True,
-    boundscheck=False,
-    error_model="numpy",
-    inline="always",
-)
+@njit(fastmath=True, cache=True, nogil=True, boundscheck=False, error_model="numpy", inline="always")
 def _serial_level(hsml, support_scale, target, nlevels):
     """Assign one particle without log2 or repeated scale calculations."""
     support_cells = hsml * support_scale
@@ -75,13 +69,7 @@ def _serial_level(hsml, support_scale, target, nlevels):
     return level
 
 
-@njit(
-    fastmath=True,
-    cache=True,
-    nogil=True,
-    boundscheck=False,
-    error_model="numpy",
-)
+@njit(fastmath=True, cache=True, nogil=True, boundscheck=False, error_model="numpy")
 def _assign_serial_levels(h, m, res, ntarget, nlevels):
     """Assign levels once and return them with the deepest occupied level."""
     level_index = np.empty(h.size, dtype=np.int8)
@@ -99,14 +87,7 @@ def _assign_serial_levels(h, m, res, ntarget, nlevels):
     return level_index, deepest
 
 
-@njit(
-    fastmath=True,
-    cache=True,
-    nogil=True,
-    boundscheck=False,
-    error_model="numpy",
-    inline="always",
-)
+@njit(fastmath=True, cache=True, nogil=True, boundscheck=False, error_model="numpy", inline="always")
 def _deposit_particle_flat(
     destination,
     level_offset,
@@ -249,13 +230,7 @@ def _deposit_particle_flat(
         distance_x += pixel_width
 
 
-@njit(
-    fastmath=True,
-    cache=True,
-    nogil=True,
-    boundscheck=False,
-    error_model="numpy",
-)
+@njit(fastmath=True, cache=True, nogil=True, boundscheck=False, error_model="numpy")
 def _scatter_serial_flat_nonperiodic(
     x,
     y,
@@ -306,13 +281,7 @@ def _scatter_serial_flat_nonperiodic(
         )
 
 
-@njit(
-    fastmath=True,
-    cache=True,
-    nogil=True,
-    boundscheck=False,
-    error_model="numpy",
-)
+@njit(fastmath=True, cache=True, nogil=True, boundscheck=False, error_model="numpy")
 def _scatter_serial_flat_periodic(
     x,
     y,
@@ -391,13 +360,7 @@ def _scatter_serial_flat_periodic(
                     )
 
 
-@njit(
-    fastmath=True,
-    cache=True,
-    nogil=True,
-    boundscheck=False,
-    error_model="numpy",
-)
+@njit(fastmath=True, cache=True, nogil=True, boundscheck=False, error_model="numpy")
 def _collapse_serial_flat(
     finest,
     coarse,
@@ -644,9 +607,7 @@ def _scatter_serial_chunk(x, y, z, m, h, res, box_x, box_y, box_z, ntarget, nlev
 def _validate_hierarchy_configuration(res: int, nlevels: int) -> None:
     """Validate that repeated factor-two coarsening produces integer grids."""
     if res <= 0:
-        raise ValueError(
-            f"Pixel size must be a positive integer. Got res={res}."
-        )
+        raise ValueError(f"Pixel size must be a positive integer. Got res={res}.")
     if nlevels < 0:
         raise ValueError(
             f"The number of hierarchy levels cannot be negative. "
@@ -690,9 +651,7 @@ def _prepare_arguments(res, ntarget, nlevels):
     nlevels = int(nlevels)
     _validate_hierarchy_configuration(res, nlevels)
     if ntarget <= 0:
-        raise ValueError(
-            f"ntarget must be greater than zero. Got ntarget={ntarget}."
-        )
+        raise ValueError(f"ntarget must be greater than zero. Got ntarget={ntarget}.")
     return res, ntarget, nlevels
 
 

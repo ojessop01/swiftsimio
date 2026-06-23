@@ -1,4 +1,6 @@
 """
+Implement overloads for numpy functions.
+
 Overloaded implementations of unyt and numpy functions to correctly handle
 :class:`~swiftsimio.objects.cosmo_array` input.
 
@@ -12,7 +14,7 @@ are documented to assist in maintenance and development of swiftsimio.
 import warnings
 from functools import reduce
 import numpy as np
-from typing import Callable, Tuple, Optional
+from typing import Callable, Any
 import unyt
 from unyt import unyt_quantity, unyt_array
 from swiftsimio import objects
@@ -91,7 +93,6 @@ from unyt._array_functions import (
     linalg_eigvalsh as unyt_linalg_eigvalsh,
     savetxt as unyt_savetxt,
     fill_diagonal as unyt_fill_diagonal,
-    isin as unyt_isin,
     place as unyt_place,
     put as unyt_put,
     put_along_axis as unyt_put_along_axis,
@@ -113,9 +114,13 @@ from unyt._array_functions import (
     array_repr as unyt_array_repr,
     linalg_outer as unyt_linalg_outer,
     trapezoid as unyt_trapezoid,
-    isin as unyt_in1d,
+    isin as unyt_isin,
     take as unyt_take,
 )
+from importlib.metadata import version
+from packaging.version import Version
+
+NUMPY_VERSION = Version(version("numpy"))
 
 _HANDLED_FUNCTIONS = {}
 
@@ -124,7 +129,7 @@ _HANDLED_FUNCTIONS = {}
 
 
 def _copy_cosmo_array_attributes_if_present(
-    from_ca: object, to_ca: object, copy_units=False
+    from_ca: object, to_ca: object, copy_units: bool = False
 ) -> object:
     """
     Copy :class:`~swiftsimio.objects.cosmo_array` attributes across two objects.
@@ -146,7 +151,7 @@ def _copy_cosmo_array_attributes_if_present(
 
     Returns
     -------
-    out : :obj:`object`
+    :obj:`object`
         The destination object (with attributes copied if copy occurred).
     """
     if not (
@@ -165,8 +170,7 @@ def _copy_cosmo_array_attributes_if_present(
 
 def _propagate_cosmo_array_attributes_to_result(func: Callable) -> Callable:
     """
-    Wrapper that copies :class:`~swiftsimio.objects.cosmo_array` attributes from first
-    input argument to first output.
+    Copy attributes from first input argument to first output.
 
     Many functions take one input (or have a first input that has a close correspondance
     to the output) and one output. This helper copies the ``cosmo_factor``, ``comoving``,
@@ -183,11 +187,15 @@ def _propagate_cosmo_array_attributes_to_result(func: Callable) -> Callable:
 
     Returns
     -------
-    out : callable
+    Callable
         The wrapped function.
     """
 
-    def wrapped(obj, *args, **kwargs):
+    def wrapped(
+        obj: object,
+        *args: tuple[Any],
+        **kwargs: dict[str, Any],
+    ) -> object:  # noqa numpydoc ignore=GL08
         # omit docstring so that sphinx picks up docstring of wrapped function
         return _copy_cosmo_array_attributes_if_present(obj, func(obj, *args, **kwargs))
 
@@ -196,7 +204,7 @@ def _propagate_cosmo_array_attributes_to_result(func: Callable) -> Callable:
 
 def _promote_unyt_to_cosmo(input_object: object) -> object:
     """
-    Upgrades the input unyt instance to its cosmo equivalent.
+    Upgrade the input unyt instance to its cosmo equivalent.
 
     In many cases we can obtain a unyt class instance and want to promote it to its cosmo
     equivalent to attach our cosmo attributes. This helper promotes an input
@@ -224,6 +232,8 @@ def _promote_unyt_to_cosmo(input_object: object) -> object:
 
 def _ensure_array_or_quantity_matches_shape(input_object: object) -> object:
     """
+    Ensure the object type is compatible with its shape.
+
     Convert scalars to :class:`~swiftsimio.objects.cosmo_quantity` and arrays to
     :class:`~swiftsimio.objects.cosmo_array`.
 
@@ -240,7 +250,7 @@ def _ensure_array_or_quantity_matches_shape(input_object: object) -> object:
 
     Returns
     -------
-    out : :obj:`object`
+    :obj:`object`
         A version of the input with container type matching data contents.
     """
     if (
@@ -257,8 +267,7 @@ def _ensure_array_or_quantity_matches_shape(input_object: object) -> object:
 
 def _ensure_result_is_cosmo_array_or_quantity(func: Callable) -> Callable:
     """
-    Wrapper that converts any :class:`~unyt.array.unyt_array` or
-    :class:`~unyt.array.unyt_quantity` instances in function output to cosmo equivalents.
+    Promote :mod:`unyt` objects to our cosmological equivalents.
 
     If the wrapped function returns a :obj:`tuple` (as many numpy functions do) it is
     iterated over (but not recursively) and each element with a unyt class type is
@@ -271,13 +280,14 @@ def _ensure_result_is_cosmo_array_or_quantity(func: Callable) -> Callable:
         The function whose result(s) will be upgraded to
         :class:`~swiftsimio.objects.cosmo_array` or
         :class:`~swifsimio.objects.cosmo_quantity`.
+
     Returns
     -------
-    out : Callable
+    Callable
         The wrapped function.
     """
 
-    def wrapped(*args, **kwargs) -> object:
+    def wrapped(*args: tuple[Any], **kwargs: dict[str, Any]) -> object:  # noqa numpydoc ignore=GL08
         # omit docstring so that sphinx picks up docstring of wrapped function
         result = func(*args, **kwargs)
         if isinstance(result, tuple):
@@ -293,7 +303,9 @@ def _ensure_result_is_cosmo_array_or_quantity(func: Callable) -> Callable:
     return wrapped
 
 
-def _sqrt_cosmo_factor(cf: "objects.cosmo_factor", **kwargs) -> "objects.cosmo_factor":
+def _sqrt_cosmo_factor(
+    cf: "objects.cosmo_factor", **kwargs: dict[str, Any]
+) -> "objects.cosmo_factor":
     """
     Take the square root of a :class:`~swiftsimio.objects.cosmo_factor`.
 
@@ -302,16 +314,19 @@ def _sqrt_cosmo_factor(cf: "objects.cosmo_factor", **kwargs) -> "objects.cosmo_f
     cf : swiftsimio.objects.cosmo_factor
         :class:`~swiftsimio.objects.cosmo_factor` whose square root should be taken.
 
+    **kwargs : dict[str, Any]
+        Arbitrary kwargs.
+
     Returns
     -------
-    out : swiftsimio.objects.cosmo_factor
+    ~swiftsimio.objects.cosmo_factor
         The square root of the input :class:`~swiftsimio.objects.cosmo_factor`.
     """
     return _power_cosmo_factor(cf, None, power=0.5)
 
 
 def _multiply_cosmo_factor(
-    *cfs: "objects.cosmo_factor", **kwargs
+    *cfs: tuple["objects.cosmo_factor"], **kwargs: dict[str, Any]
 ) -> "objects.cosmo_factor":
     """
     Recursively multiply :class:`~swiftsimio.objects.cosmo_factor`s.
@@ -321,19 +336,22 @@ def _multiply_cosmo_factor(
 
     Parameters
     ----------
-    cfs : swiftsimio.objects.cosmo_factor
+    *cfs : swiftsimio.objects.cosmo_factor
         :class:`~swiftsimio.objects.cosmo_factor`s to be multiplied.
+
+    **kwargs : dict[str, Any]
+        Arbitrary kwargs.
 
     Returns
     -------
-    out : swiftsimio.objects.cosmo_factor
+    ~swiftsimio.objects.cosmo_factor
         The product of the input :class:`~swiftsimio.objects.cosmo_factor`s.
     """
     return reduce(__binary_multiply_cosmo_factor, cfs)
 
 
 def __binary_multiply_cosmo_factor(
-    cf1: "objects.cosmo_factor", cf2: "objects.cosmo_factor", **kwargs
+    cf1: "objects.cosmo_factor", cf2: "objects.cosmo_factor", **kwargs: dict[str, Any]
 ) -> "objects.cosmo_factor":
     """
     Multiply two :class:`~swiftsimio.objects.cosmo_factor`s.
@@ -349,9 +367,12 @@ def __binary_multiply_cosmo_factor(
     cf2 : swiftsimio.objects.cosmo_factor
         The second :class:`~swiftsimio.objects.cosmo_factor`.
 
+    **kwargs : dict[str, Any]
+        Arbitrary kwargs.
+
     Returns
     -------
-    out : swiftsimio.objects.cosmo_factor
+    ~swiftsimio.objects.cosmo_factor
         The product of the :class:`~swiftsimio.objects.cosmo_factor`s.
     """
     if (cf1 is None) and (cf2 is None):
@@ -369,10 +390,10 @@ def __binary_multiply_cosmo_factor(
 
 
 def _preserve_cosmo_factor(
-    *cfs: "objects.cosmo_factor", **kwargs
+    *cfs: tuple["objects.cosmo_factor"], **kwargs: dict[str, Any]
 ) -> "objects.cosmo_factor":
     """
-    Helper to preserve the :class:`~swiftsimio.objects.cosmo_factor` of input.
+    Preserve the :class:`~swiftsimio.objects.cosmo_factor` of input.
 
     If there is a single argument, return its ``cosmo_factor``. If there are multiple
     arguments, check that they all have matching ``cosmo_factor``. Any arguments that
@@ -380,19 +401,22 @@ def _preserve_cosmo_factor(
 
     Parameters
     ----------
-    cfs : swiftsimio.objects.cosmo_factor
+    *cfs : swiftsimio.objects.cosmo_factor
         :class:`~swiftsimio.objects.cosmo_factor`s to be preserved.
+
+    **kwargs : dict[str, Any]
+        Arbitrary kwargs.
 
     Returns
     -------
-    out : swiftsimio.objects.cosmo_factor
+    ~swiftsimio.objects.cosmo_factor
         The preserved :class:`~swiftsimio.objects.cosmo_factor`.
     """
     return reduce(__binary_preserve_cosmo_factor, cfs)
 
 
 def __binary_preserve_cosmo_factor(
-    cf1: "objects.cosmo_factor", cf2: "objects.cosmo_factor", **kwargs
+    cf1: "objects.cosmo_factor", cf2: "objects.cosmo_factor", **kwargs: dict[str, Any]
 ) -> "objects.cosmo_factor":
     """
     Given two :class:`~swiftsimio.objects.cosmo_factor`s, get it if they match.
@@ -402,7 +426,6 @@ def __binary_preserve_cosmo_factor(
     are compatible, return the compatible :class:`~swiftsimio.objects.cosmo_factor`.
     If one of them is ``None``, produce a warning. If they are incompatible, raise.
 
-
     Parameters
     ----------
     cf1 : swiftsimio.objects.cosmo_factor
@@ -411,9 +434,12 @@ def __binary_preserve_cosmo_factor(
     cf2 : swiftsimio.objects.cosmo_factor
         The second :class:`~swiftsimio.objects.cosmo_factor`.
 
+    **kwargs : dict[str, Any]
+        Arbitrary kwargs.
+
     Returns
     -------
-    out : swiftsimio.objects.cosmo_factor
+    ~swiftsimio.objects.cosmo_factor
         The preserved :class:`~swiftsimio.objects.cosmo_factor`s.
 
     Raises
@@ -450,12 +476,13 @@ def __binary_preserve_cosmo_factor(
 def _power_cosmo_factor(
     cf1: "objects.cosmo_factor",
     cf2: "objects.cosmo_factor",
-    inputs: "Optional[Tuple[objects.cosmo_array]]" = None,
-    power: Optional[float] = None,
+    inputs: "tuple[objects.cosmo_array] | None" = None,
+    power: float | None = None,
 ) -> "objects.cosmo_factor":
     """
-    Raise a :class:`~swiftsimio.objects.cosmo_factor` to a power of another
-    :class:`~swiftsimio.objects.cosmo_factor`.
+    Raise a :class:`~swiftsimio.objects.cosmo_factor` to a power.
+
+    The exponent can be another :class:`~swiftsimio.objects.cosmo_factor`.
 
     Parameters
     ----------
@@ -474,7 +501,7 @@ def _power_cosmo_factor(
 
     Returns
     -------
-    out : swiftsimio.objects.cosmo_factor
+    ~swiftsimio.objects.cosmo_factor
         The exponentiated :class:`~swiftsimio.objects.cosmo_factor`s.
 
     Raises
@@ -501,7 +528,7 @@ def _power_cosmo_factor(
 
 
 def _square_cosmo_factor(
-    cf: "objects.cosmo_factor", **kwargs
+    cf: "objects.cosmo_factor", **kwargs: dict[str, Any]
 ) -> "objects.cosmo_factor":
     """
     Square a :class:`~swiftsimio.objects.cosmo_factor`.
@@ -511,15 +538,20 @@ def _square_cosmo_factor(
     cf : swiftsimio.objects.cosmo_factor
         :class:`~swiftsimio.objects.cosmo_factor` to square.
 
+    **kwargs : dict[str, Any]
+        Arbitrary kwargs.
+
     Returns
     -------
-    out : swiftsimio.objects.cosmo_factor
+    ~swiftsimio.objects.cosmo_factor
         The squared :class:`~swiftsimio.objects.cosmo_factor`.
     """
     return _power_cosmo_factor(cf, None, power=2)
 
 
-def _cbrt_cosmo_factor(cf: "objects.cosmo_factor", **kwargs) -> "objects.cosmo_factor":
+def _cbrt_cosmo_factor(
+    cf: "objects.cosmo_factor", **kwargs: dict[str, Any]
+) -> "objects.cosmo_factor":
     """
     Take the cube root of a :class:`~swiftsimio.objects.cosmo_factor`.
 
@@ -528,16 +560,19 @@ def _cbrt_cosmo_factor(cf: "objects.cosmo_factor", **kwargs) -> "objects.cosmo_f
     cf : swiftsimio.objects.cosmo_factor
         :class:`~swiftsimio.objects.cosmo_factor` whose cube root should be taken.
 
+    **kwargs : dict[str, Any]
+        Arbitrary kwargs.
+
     Returns
     -------
-    out : swiftsimio.objects.cosmo_factor
+    ~swiftsimio.objects.cosmo_factor
         The cube root of the input :class:`~swiftsimio.objects.cosmo_factor`.
     """
     return _power_cosmo_factor(cf, None, power=1.0 / 3.0)
 
 
 def _divide_cosmo_factor(
-    cf1: "objects.cosmo_factor", cf2: "objects.cosmo_factor", **kwargs
+    cf1: "objects.cosmo_factor", cf2: "objects.cosmo_factor", **kwargs: dict[str, Any]
 ) -> "objects.cosmo_factor":
     """
     Divide two :class:`~swiftsimio.objects.cosmo_factor`s.
@@ -547,19 +582,22 @@ def _divide_cosmo_factor(
     cf1 : swiftsimio.objects.cosmo_factor
         Numerator :class:`~swiftsimio.objects.cosmo_factor`.
 
-    cf1 : swiftsimio.objects.cosmo_factor
+    cf2 : swiftsimio.objects.cosmo_factor
         Denominator :class:`~swiftsimio.objects.cosmo_factor`.
+
+    **kwargs : dict[str, Any]
+        Arbitrary kwargs.
 
     Returns
     -------
-    out : swiftsimio.objects.cosmo_factor
+    ~swiftsimio.objects.cosmo_factor
         The ratio of the input :class:`~swiftsimio.objects.cosmo_factor`s.
     """
     return _multiply_cosmo_factor(cf1, _reciprocal_cosmo_factor(cf2))
 
 
 def _reciprocal_cosmo_factor(
-    cf: "objects.cosmo_factor", **kwargs
+    cf: "objects.cosmo_factor", **kwargs: dict[str, Any]
 ) -> "objects.cosmo_factor":
     """
     Take the inverse of a :class:`~swiftsimio.objects.cosmo_factor`.
@@ -569,18 +607,25 @@ def _reciprocal_cosmo_factor(
     cf : swiftsimio.objects.cosmo_factor
         :class:`~swiftsimio.objects.cosmo_factor` to be inverted.
 
+    **kwargs : dict[str, Any]
+        Arbitrary kwargs.
+
     Returns
     -------
-    out : swiftsimio.objects.cosmo_factor
+    ~swiftsimio.objects.cosmo_factor
         The inverted :class:`~swiftsimio.objects.cosmo_factor`.
     """
     return _power_cosmo_factor(cf, None, power=-1)
 
 
 def _passthrough_cosmo_factor(
-    cf: "objects.cosmo_factor", cf2: "Optional[objects.cosmo_factor]" = None, **kwargs
+    cf: "objects.cosmo_factor",
+    cf2: "objects.cosmo_factor | None" = None,
+    **kwargs: dict[str, Any],
 ) -> "objects.cosmo_factor":
     """
+    Keep the same :class:`~swiftsimio.objects.cosmo_factor`.
+
     Preserve a :class:`~swiftsimio.objects.cosmo_factor`, optionally checking that it
     matches a second :class:`~swiftsimio.objects.cosmo_factor`.
 
@@ -589,15 +634,18 @@ def _passthrough_cosmo_factor(
 
     Parameters
     ----------
-    cf1 : swiftsimio.objects.cosmo_factor
+    cf : swiftsimio.objects.cosmo_factor
         :class:`~swiftsimio.objects.cosmo_factor` to pass through.
 
     cf2 : swiftsimio.objects.cosmo_factor
         Optional second :class:`~swiftsimio.objects.cosmo_factor` to check matches.
 
+    **kwargs : dict[str, Any]
+        Arbitrary kwargs.
+
     Returns
     -------
-    out : swiftsimio.objects.cosmo_factor
+    ~swiftsimio.objects.cosmo_factor
         The input :class:`~swiftsimio.objects.cosmo_factor`.
 
     Raises
@@ -615,12 +663,14 @@ def _passthrough_cosmo_factor(
 def _return_without_cosmo_factor(
     cf: "objects.cosmo_factor",
     cf2: "objects.cosmo_factor" = np._NoValue,
-    zero_comparison: Optional[bool] = None,
-    **kwargs,
+    zero_comparison: bool | None = None,
+    **kwargs: dict[str, Any],
 ) -> None:
     """
-    Return ``None``, but first check that argument
-    :class:`~swiftsimio.objects.cosmo_factor`s match, raising or warning if not.
+    Return ``None`` after checking compatibility.
+
+    First check that argument :class:`~swiftsimio.objects.cosmo_factor`s
+    match, raising or warning if not. Then return ``None``.
 
     Comparisons are a special case that wraps around this wrapper, see
     :func:`~swiftsimio._array_functions._comparison_cosmo_factor`.
@@ -635,7 +685,7 @@ def _return_without_cosmo_factor(
 
     Parameters
     ----------
-    cf1 : swiftsimio.objects.cosmo_factor
+    cf : swiftsimio.objects.cosmo_factor
         The :class:`~swiftsimio.objects.cosmo_factor` to discard.
 
     cf2 : swiftsimio.objects.cosmo_factor
@@ -646,9 +696,12 @@ def _return_without_cosmo_factor(
         If ``True``, silences warnings when exactly one of ``cf1`` and ``cf2`` is
         ``None``. Enables comparing with zero without warning.
 
+    **kwargs : dict[str, Any]
+        Arbitrary kwargs.
+
     Returns
     -------
-    out : None
+    None
         The :class:`~swiftsimio.objects.cosmo_factor` is discarded.
 
     Raises
@@ -686,11 +739,10 @@ def _return_without_cosmo_factor(
 
 
 def _arctan2_cosmo_factor(
-    cf1: "objects.cosmo_factor", cf2: "objects.cosmo_factor", **kwargs
+    cf1: "objects.cosmo_factor", cf2: "objects.cosmo_factor", **kwargs: dict[str, Any]
 ) -> "objects.cosmo_factor":
     """
-    Helper specifically to handle the :class:`~swiftsimio.objects.cosmo_factor`s for the
-    ``arctan2`` ufunc from numpy.
+    Handle the :class:`~swiftsimio.objects.cosmo_factor`s for the ``arctan2`` ufunc.
 
     Parameters
     ----------
@@ -700,9 +752,12 @@ def _arctan2_cosmo_factor(
     cf2 : swiftsimio.objects.cosmo_factor
         :class:`~swiftsimio.objects.cosmo_factor` for the second ``arctan2`` argument.
 
+    **kwargs : dict[str, Any]
+        Arbitrary kwargs.
+
     Returns
     -------
-    out : swiftsimio.objects.cosmo_factor
+    ~swiftsimio.objects.cosmo_factor
         The :class:`~swiftsimio.objects.cosmo_factor` for the ``arctan2`` result.
 
     Raises
@@ -710,7 +765,6 @@ def _arctan2_cosmo_factor(
     ValueError
         If the input :class:`~swiftsimio.objects.cosmo_factor`s differ, they will
         not cancel out and this is an error.
-
     """
     if (cf1 is None) and (cf2 is None):
         return None
@@ -720,27 +774,27 @@ def _arctan2_cosmo_factor(
             f" provided cosmo_factor ({cf2}) for all arguments.",
             RuntimeWarning,
         )
-        return objects.cosmo_factor(objects.a ** 0, scale_factor=cf2.scale_factor)
+        return objects.cosmo_factor(objects.a**0, scale_factor=cf2.scale_factor)
     elif (cf1 is not None) and (cf2 is None):
         warnings.warn(
             f"Mixing arguments with and without cosmo_factors, continuing assuming"
             f" provided cosmo_factor ({cf1}) for all arguments.",
             RuntimeWarning,
         )
-        return objects.cosmo_factor(objects.a ** 0, scale_factor=cf1.scale_factor)
+        return objects.cosmo_factor(objects.a**0, scale_factor=cf1.scale_factor)
     elif (cf1 is not None) and (cf2 is not None) and (cf1 != cf2):
         raise ValueError(f"Arguments have cosmo_factors that differ: {cf1} and {cf2}.")
     elif (cf1 is not None) and (cf2 is not None) and (cf1 == cf2):
-        return objects.cosmo_factor(objects.a ** 0, scale_factor=cf1.scale_factor)
+        return objects.cosmo_factor(objects.a**0, scale_factor=cf1.scale_factor)
 
 
 def _comparison_cosmo_factor(
     cf1: "objects.cosmo_factor",
     cf2: "objects.cosmo_factor",
-    inputs: "Optional[Tuple[objects.cosmo_array]]" = None,
+    inputs: "tuple[objects.cosmo_array] | None" = None,
 ) -> None:
     """
-    Helper to enable comparisons involving :class:`~swiftsimio.objects.cosmo_factor`s.
+    Enable comparisons involving :class:`~swiftsimio.objects.cosmo_factor`s.
 
     Warnings are emitted when the comparison is ambiguous, for instance if comparing to a
     bare :obj:`float` or similar. Comparison to zero is a special case where we suppress
@@ -762,7 +816,7 @@ def _comparison_cosmo_factor(
 
     Returns
     -------
-    out : None
+    None
         The :class:`~swiftsimio.objects.cosmo_factor` is discarded.
     """
     try:
@@ -787,7 +841,9 @@ def _comparison_cosmo_factor(
     return _return_without_cosmo_factor(cf1, cf2=cf2, zero_comparison=zero_comparison)
 
 
-def _prepare_array_func_args(*args, _default_cm: bool = True, **kwargs) -> dict:
+def _prepare_array_func_args(
+    *args: tuple[Any], _default_cm: bool = True, **kwargs: dict[str, Any]
+) -> dict:
     """
     Coerce args and kwargs to a common ``comoving`` and collect ``cosmo_factor``s.
 
@@ -816,17 +872,23 @@ def _prepare_array_func_args(*args, _default_cm: bool = True, **kwargs) -> dict:
 
     Parameters
     ----------
-    _default_cm: bool
+    *args : tuple[Any]
+        Arbitrary arguments to prepare.
+
+    _default_cm : bool
         If mixed ``comoving`` attributes are found, their data are converted such that
-        their ``comoving`` has the value of this argument. (Default: ``True``)
+        their ``comoving`` has the value of this argument.
+
+    **kwargs : dict[str, Any]
+        Arbitrary kwargs to prepare.
 
     Returns
     -------
-    out : dict
-        A dictionary containing the input `args`` and ``kwargs`` coerced to a common
-        state, and lists of their ``cosmo_factor`` attributes, and ``comoving`` and
-        ``compression`` values that can be used in return values for wrapped functions,
-        when relevant.
+    dict
+        A dictionary containing the input ``args`` and ``kwargs`` coerced to a common
+        state, and lists of their ``cosmo_factor`` attributes, and ``comoving``,
+        ``valid_transform`` and ``compression`` values that can be used in return values
+        for wrapped functions, when relevant.
 
     Raises
     ------
@@ -835,6 +897,7 @@ def _prepare_array_func_args(*args, _default_cm: bool = True, **kwargs) -> dict:
     """
     cms = [(hasattr(arg, "comoving"), getattr(arg, "comoving", None)) for arg in args]
     cfs = [getattr(arg, "cosmo_factor", None) for arg in args]
+    vts = [getattr(arg, "valid_transform", True) for arg in args]
     comps = [
         (hasattr(arg, "compression"), getattr(arg, "compression", None)) for arg in args
     ]
@@ -843,6 +906,7 @@ def _prepare_array_func_args(*args, _default_cm: bool = True, **kwargs) -> dict:
         for k, kwarg in kwargs.items()
     }
     kw_cfs = {k: getattr(kwarg, "cosmo_factor", None) for k, kwarg in kwargs.items()}
+    kw_vts = {k: getattr(kwarg, "valid_transform", True) for k, kwarg in kwargs.items()}
     kw_comps = {
         k: (hasattr(kwarg, "compression"), getattr(kwarg, "compression", None))
         for k, kwarg in kwargs.items()
@@ -867,7 +931,12 @@ def _prepare_array_func_args(*args, _default_cm: bool = True, **kwargs) -> dict:
         ret_cm = False
     else:
         # mix of comoving and physical inputs
-        # better to modify inplace (convert_to_comoving)?
+        if _default_cm:
+            for arg, cm in zip(args, cms):
+                # None is not the same as False here:
+                if getattr(arg, "valid_transform", None) is False:
+                    _default_cm = False
+                    break
         if _default_cm:
             args = [
                 arg.to_comoving() if cm[0] and not cm[1] else arg
@@ -888,20 +957,22 @@ def _prepare_array_func_args(*args, _default_cm: bool = True, **kwargs) -> dict:
                 for k, kwarg in kwargs.items()
             }
             ret_cm = False
+    ret_vt = all(vts + list(kw_vts.values()))  # if any False, then False
     if len(set(comps + list(kw_comps.values()))) == 1:
         # all compressions identical, preserve it
         ret_comp = (comps + list(kw_comps.values()))[0]
     else:
         # mixed compressions, strip it off
         ret_comp = None
-    return dict(
-        args=args,
-        kwargs=kwargs,
-        cfs=cfs,
-        kw_cfs=kw_cfs,
-        comoving=ret_cm,
-        compression=ret_comp,
-    )
+    return {
+        "args": args,
+        "kwargs": kwargs,
+        "cfs": cfs,
+        "kw_cfs": kw_cfs,
+        "comoving": ret_cm,
+        "valid_transform": ret_vt,
+        "compression": ret_comp,
+    }
 
 
 def implements(numpy_function: Callable) -> Callable:
@@ -917,7 +988,7 @@ def implements(numpy_function: Callable) -> Callable:
 
     Returns
     -------
-    out : Callable
+    Callable
         The wrapped function.
     """
 
@@ -928,12 +999,12 @@ def implements(numpy_function: Callable) -> Callable:
 
         Parameters
         ----------
-        func: Callable
+        func : Callable
             The function wrapping the numpy equivalent.
 
         Returns
         -------
-        out : Callable
+        Callable
             The input ``func``.
         """
         _HANDLED_FUNCTIONS[numpy_function] = func
@@ -946,10 +1017,10 @@ def _return_helper(
     res: np.ndarray,
     helper_result: dict,
     ret_cf: "objects.cosmo_factor",
-    out: Optional[np.ndarray] = None,
+    out: np.ndarray | None = None,
 ) -> "objects.cosmo_array":
     """
-    Helper function to attach our cosmo attributes to return values of wrapped functions.
+    Attach our cosmo attributes to return values of wrapped functions.
 
     The return value is first promoted to be a :class:`~swiftsimio.objects.cosmo_array`
     (or quantity) if necessary. If the return value is still not one of our cosmo
@@ -970,17 +1041,19 @@ def _return_helper(
 
     Returns
     -------
-    out : swiftsimio.objects.cosmo_array
+    ~swiftsimio.objects.cosmo_array
         The input return value of a wrapped function with our cosmo attributes applied.
     """
     res = _promote_unyt_to_cosmo(res)
     if isinstance(res, objects.cosmo_array):  # also recognizes cosmo_quantity
         res.comoving = helper_result["comoving"]
         res.cosmo_factor = ret_cf
+        res.valid_transform = helper_result["valid_transform"]
         res.compression = helper_result["compression"]
     if isinstance(out, objects.cosmo_array):  # also recognizes cosmo_quantity
         out.comoving = helper_result["comoving"]
         out.cosmo_factor = ret_cf
+        out.valid_transform = helper_result["valid_transform"]
         out.compression = helper_result["compression"]
     return res
 
@@ -989,7 +1062,7 @@ def _default_unary_wrapper(
     unyt_func: Callable, cosmo_factor_handler: Callable
 ) -> Callable:
     """
-    Wrapper helper for unary functions with typical behaviour.
+    Wrap unary functions with typical behaviour.
 
     For many numpy and unyt functions with one (main) input argument, the wrapping
     code that we need to apply is repetitive. Just prepare the arguments, apply
@@ -1008,18 +1081,25 @@ def _default_unary_wrapper(
 
     Returns
     -------
-    out : Callable
+    Callable
         The wrapped function.
     """
 
-    def wrapper(*args, **kwargs):
+    def wrapper(*args: tuple[Any], **kwargs: dict[str, Any]) -> Callable:
         """
-        Prepare arguments, handle ``cosmo_factor`` attriubtes, and attach attributes to
-        output.
+        Prepare arguments, handle ``cosmo_factor`` attributes, and attach attributes.
+
+        Parameters
+        ----------
+        *args : tuple[Any]
+            Arbitrary arguments of the wrapped function.
+
+        **kwargs : dict[str, Any]
+            Arbitrary kwargs of the wrapped function.
 
         Returns
         -------
-        out : Callable
+        Callable
             The wrapped function.
         """
         helper_result = _prepare_array_func_args(*args, **kwargs)
@@ -1037,7 +1117,7 @@ def _default_binary_wrapper(
     unyt_func: Callable, cosmo_factor_handler: Callable
 ) -> Callable:
     """
-    Wrapper helper for binary functions with typical behaviour.
+    Wrap binary functions with typical behaviour.
 
     For many numpy and unyt functions with two (main) input arguments, the wrapping
     code that we need to apply is repetitive. Just prepare the arguments, apply
@@ -1056,18 +1136,25 @@ def _default_binary_wrapper(
 
     Returns
     -------
-    out : Callable
+    Callable
         The wrapped function.
     """
 
-    def wrapper(*args, **kwargs):
+    def wrapper(*args: tuple[Any], **kwargs: dict[str, Any]) -> Callable:
         """
-        Prepare arguments, handle ``cosmo_factor`` attributes, and attach attributes to
-        output.
+        Prepare arguments, handle ``cosmo_factor`` attributes, and attach attributes.
+
+        Parameters
+        ----------
+        *args : tuple[Any]
+            Arbitrary arguments of the wrapped function.
+
+        **kwargs : dict[str, Any]
+            Arbitrary kwargs of the wrapped function.
 
         Returns
         -------
-        out : Callable
+        Callable
             The wrapped function.
         """
         helper_result = _prepare_array_func_args(*args, **kwargs)
@@ -1083,7 +1170,7 @@ def _default_binary_wrapper(
 
 def _default_comparison_wrapper(unyt_func: Callable) -> Callable:
     """
-    Wrapper helper for binary comparison functions with typical behaviour.
+    Wrap binary comparison functions with typical behaviour.
 
     For many numpy and unyt comparison functions with two (main) input arguments, the
     wrapping code that we need to apply is repetitive. Just prepare the arguments,
@@ -1099,20 +1186,27 @@ def _default_comparison_wrapper(unyt_func: Callable) -> Callable:
 
     Returns
     -------
-    out : Callable
+    Callable
         The wrapped function.
     """
 
     # assumes we have two primary arguments that will be handled with
     # _comparison_cosmo_factor with them as the inputs
-    def wrapper(*args, **kwargs):
+    def wrapper(*args: tuple[Any], **kwargs: dict[str, Any]) -> Callable:
         """
-        Prepare arguments, handle ``cosmo_factor`` attributes, and attach attributes to
-        output.
+        Prepare arguments, handle ``cosmo_factor`` attributes, and attach attributes.
+
+        Parameters
+        ----------
+        *args : tuple[Any]
+            Arbitrary arguments of the wrapped function.
+
+        **kwargs : dict[str, Any]
+            Arbitrary kwargs of the wrapped function.
 
         Returns
         -------
-        out : Callable
+        Callable
             The wrapped function.
         """
         helper_result = _prepare_array_func_args(*args, **kwargs)
@@ -1127,7 +1221,7 @@ def _default_comparison_wrapper(unyt_func: Callable) -> Callable:
 
 def _default_oplist_wrapper(unyt_func: Callable) -> Callable:
     """
-    Wrapper helper for functions accepting a list of operands with typical behaviour.
+    Wrap functions accepting a list of operands with typical behaviour.
 
     For many numpy and unyt functions taking a list of operands as an argument, the
     wrapping code that we need to apply is repetitive. Just prepare the arguments,
@@ -1144,18 +1238,25 @@ def _default_oplist_wrapper(unyt_func: Callable) -> Callable:
 
     Returns
     -------
-    out : Callable
+    Callable
         The wrapped function.
     """
 
-    def wrapper(*args, **kwargs):
+    def wrapper(*args: tuple[Any], **kwargs: dict[str, Any]) -> Callable:
         """
-        Prepare arguments, handle ``cosmo_factor`` attributes, and attach attributes to
-        output.
+        Prepare arguments, handle ``cosmo_factor`` attributes, and attach attributes.
+
+        Parameters
+        ----------
+        *args : tuple[Any]
+            Arbitrary arguments of the wrapped function.
+
+        **kwargs : dict[str, Any]
+            Arbitrary kwargs of the wrapped function.
 
         Returns
         -------
-        out : Callable
+        Callable
             The wrapped function.
         """
         helper_result = _prepare_array_func_args(*args, **kwargs)
@@ -1171,6 +1272,59 @@ def _default_oplist_wrapper(unyt_func: Callable) -> Callable:
     return wrapper
 
 
+def _array_like_wrapper(func: Callable) -> Callable:
+    """
+    Wrap functions accepting a ``like`` kwarg.
+
+    Several :mod:`numpy` functions allow passing a ``like`` kwarg that can be used to
+    copy attributes or otherwise handle properties from a subclass when a new array is
+    created. This wrapper lets us implement these functions easily.
+
+    Can be used as a decorator.
+
+    Parameters
+    ----------
+    func : Callable
+        The :mod:`numpy` function to be wrapped.
+
+    Returns
+    -------
+    Callable
+        The wrapped function.
+    """
+
+    def wrapper(
+        *args: tuple[Any], like: "objects.cosmo_array" = None, **kwargs: dict[str, Any]
+    ) -> Callable:
+        """
+        Create the new array, view it as a cosmo array or quantity, and attach attributes.
+
+        Parameters
+        ----------
+        *args : tuple[Any]
+            Arbitrary arguments of the wrapped function.
+
+        like : ~swiftsimio.objects.cosmo_array
+            The array that attributes are copied from.
+
+        **kwargs : dict[str, Any]
+            Arbitrary kwargs of the wrapped function.
+
+        Returns
+        -------
+        Callable
+            The wrapped function.
+        """
+        arr = func(*args, **kwargs)
+        cosmo = arr.view(
+            objects.cosmo_quantity if arr.ndim == 0 else objects.cosmo_array
+        )
+        _copy_cosmo_array_attributes_if_present(like, cosmo, copy_units=True)
+        return cosmo
+
+    return wrapper
+
+
 # Next we wrap functions from unyt and numpy. There's not much point in writing docstrings
 # or type hints for all of these.
 
@@ -1179,40 +1333,8 @@ def _default_oplist_wrapper(unyt_func: Callable) -> Callable:
 
 
 @implements(np.array2string)
-def array2string(
-    a,
-    max_line_width=None,
-    precision=None,
-    suppress_small=None,
-    separator=" ",
-    prefix="",
-    style=np._NoValue,
-    formatter=None,
-    threshold=None,
-    edgeitems=None,
-    sign=None,
-    floatmode=None,
-    suffix="",
-    *,
-    legacy=None,
-):
-
-    res = unyt_array2string(
-        a,
-        max_line_width=max_line_width,
-        precision=precision,
-        suppress_small=suppress_small,
-        separator=separator,
-        prefix=prefix,
-        style=style,
-        formatter=formatter,
-        threshold=threshold,
-        edgeitems=edgeitems,
-        sign=sign,
-        floatmode=floatmode,
-        suffix=suffix,
-        legacy=legacy,
-    )
+def array2string(a, *args, **kwargs):  # noqa numpydoc ignore=GL08
+    res = unyt_array2string(a, *args, **kwargs)
     if a.comoving:
         append = " (comoving)"
     elif a.comoving is False:
@@ -1230,8 +1352,12 @@ implements(np.kron)(_default_binary_wrapper(unyt_kron, _multiply_cosmo_factor))
 
 
 @implements(np.histogram_bin_edges)
-def histogram_bin_edges(a, bins=10, range=None, weights=None):
-
+def histogram_bin_edges(  # noqa: ANN202
+    a,  # noqa: ANN001
+    bins=10,  # noqa: ANN001
+    range=None,  # noqa: ANN001
+    weights=None,  # noqa: ANN001
+):  # noqa numpydoc ignore=GL08
     helper_result = _prepare_array_func_args(a, bins=bins, range=range, weights=weights)
     if not isinstance(bins, str) and np.ndim(bins) == 1:
         # we got bin edges as input
@@ -1260,8 +1386,13 @@ implements(np.linalg.svd)(
 
 
 @implements(np.histogram)
-def histogram(a, bins=10, range=None, density=None, weights=None):
-
+def histogram(  # noqa: ANN202
+    a,  # noqa: ANN001
+    bins=10,  # noqa: ANN001
+    range=None,  # noqa: ANN001
+    density=None,  # noqa: ANN001
+    weights=None,  # noqa: ANN001
+):  # noqa numpydoc ignore=GL08
     helper_result = _prepare_array_func_args(
         a, bins=bins, range=range, density=density, weights=weights
     )
@@ -1279,13 +1410,20 @@ def histogram(a, bins=10, range=None, density=None, weights=None):
     if isinstance(counts, objects.cosmo_array):  # also recognizes cosmo_quantity
         counts.comoving = helper_result["comoving"]
         counts.cosmo_factor = ret_cf_counts
+        counts.valid_transform = helper_result["valid_transform"]
         counts.compression = helper_result["compression"]
     return counts, _return_helper(bins, helper_result, ret_cf_bins)
 
 
 @implements(np.histogram2d)
-def histogram2d(x, y, bins=10, range=None, density=None, weights=None):
-
+def histogram2d(  # noqa: ANN202
+    x,  # noqa: ANN001
+    y,  # noqa: ANN001
+    bins=10,  # noqa: ANN001
+    range=None,  # noqa: ANN001
+    density=None,  # noqa: ANN001
+    weights=None,  # noqa: ANN001
+):  # noqa numpydoc ignore=GL08
     if range is not None:
         xrange, yrange = range
     else:
@@ -1330,6 +1468,7 @@ def histogram2d(x, y, bins=10, range=None, density=None, weights=None):
             ):  # also recognizes cosmo_quantity
                 counts.comoving = helper_result_w["comoving"]
                 counts.cosmo_factor = ret_cf_w
+                counts.valid_transform = helper_result_w["valid_transform"]
                 counts.compression = helper_result_w["compression"]
     else:  # density=True
         # now x, y and weights must be compatible because they will combine
@@ -1375,6 +1514,7 @@ def histogram2d(x, y, bins=10, range=None, density=None, weights=None):
         if isinstance(counts, objects.cosmo_array):  # also recognizes cosmo_quantity
             counts.comoving = helper_result["comoving"]
             counts.cosmo_factor = ret_cf_counts
+            counts.valid_transform = helper_result["valid_transform"]
             counts.compression = helper_result["compression"]
     return (
         counts,
@@ -1384,8 +1524,13 @@ def histogram2d(x, y, bins=10, range=None, density=None, weights=None):
 
 
 @implements(np.histogramdd)
-def histogramdd(sample, bins=10, range=None, density=None, weights=None):
-
+def histogramdd(  # noqa: ANN202
+    sample,  # noqa: ANN001
+    bins=10,  # noqa: ANN001
+    range=None,  # noqa: ANN001
+    density=None,  # noqa: ANN001
+    weights=None,  # noqa: ANN001
+):  # noqa numpydoc ignore=GL08
     D = len(sample)
     if range is not None:
         ranges = range
@@ -1431,6 +1576,7 @@ def histogramdd(sample, bins=10, range=None, density=None, weights=None):
             if isinstance(counts, objects.cosmo_array):
                 counts.comoving = helper_result_w["comoving"]
                 counts.cosmo_factor = ret_cf_w
+                counts.valid_transform = helper_result_w["valid_transform"]
                 counts.compression = helper_result_w["compression"]
     else:  # density=True
         # now sample and weights must be compatible because they will combine
@@ -1460,6 +1606,7 @@ def histogramdd(sample, bins=10, range=None, density=None, weights=None):
         if isinstance(counts, objects.cosmo_array):  # also recognizes cosmo_quantity
             counts.comoving = helper_result["comoving"]
             counts.cosmo_factor = ret_cf_counts
+            counts.valid_transform = helper_result["valid_transform"]
             counts.compression = helper_result["compression"]
     return (
         counts,
@@ -1487,7 +1634,20 @@ implements(np.stack)(_default_oplist_wrapper(unyt_stack))
 implements(np.around)(_default_unary_wrapper(unyt_around, _preserve_cosmo_factor))
 
 
-def _recursive_to_comoving(lst):
+def _recursive_to_comoving(lst: list) -> list:
+    """
+    Recursively convert to comoving coordinates.
+
+    Parameters
+    ----------
+    lst : list[cosmo_array]
+        List of arrays (possibly nested lists) to convert.
+
+    Returns
+    -------
+    list
+        Matching (nested) lists in comoving units.
+    """
     ret_lst = list()
     for item in lst:
         if isinstance(item, list):
@@ -1497,9 +1657,22 @@ def _recursive_to_comoving(lst):
     return ret_lst
 
 
-def _prepare_array_block_args(lst, recursing=False):
+def _prepare_array_block_args(lst: list, recursing: bool = False) -> dict:
     """
     Block accepts only a nested list of array "blocks". We need to recurse on this.
+
+    Parameters
+    ----------
+    lst : list
+        List of array "blocks".
+
+    recursing : bool
+        A flag to track whether this is a recursive call.
+
+    Returns
+    -------
+    dict
+        The prepared block argument.
     """
     helper_results = list()
     if isinstance(lst, list):
@@ -1511,6 +1684,7 @@ def _prepare_array_block_args(lst, recursing=False):
     if recursing:
         return helper_results
     cms = [hr["comoving"] for hr in helper_results]
+    vts = [hr["valid_transform"] for hr in helper_results]
     comps = [hr["compression"] for hr in helper_results]
     cfs = [hr["cfs"] for hr in helper_results]
     convert_to_cm = False
@@ -1529,6 +1703,7 @@ def _prepare_array_block_args(lst, recursing=False):
         # mix of True and False only
         ret_cm = True
         convert_to_cm = True
+    ret_vt = all(vts)
     if len(set(comps)) == 1:
         ret_comp = comps[0]
     else:
@@ -1541,17 +1716,18 @@ def _prepare_array_block_args(lst, recursing=False):
         ret_lst = _recursive_to_comoving(lst)
     else:
         ret_lst = lst
-    return dict(
-        args=ret_lst,
-        kwargs=dict(),
-        comoving=ret_cm,
-        cosmo_factor=ret_cf,
-        compression=ret_comp,
-    )
+    return {
+        "args": ret_lst,
+        "kwargs": {},
+        "comoving": ret_cm,
+        "cosmo_factor": ret_cf,
+        "valid_transform": ret_vt,
+        "compression": ret_comp,
+    }
 
 
 @implements(np.block)
-def block(arrays):
+def block(arrays):  # noqa numpydoc ignore=GL08
     # block is a special case since we need to recurse more than one level
     # down the list of arrays.
     helper_result_block = _prepare_array_block_args(arrays)
@@ -1607,18 +1783,17 @@ implements(np.array_equiv)(_default_comparison_wrapper(unyt_array_equiv))
 
 
 @implements(np.linspace)
-def linspace(
-    start,
-    stop,
-    num=50,
-    endpoint=True,
-    retstep=False,
-    dtype=None,
-    axis=0,
+def linspace(  # noqa numpydoc ignore=GL08
+    start,  # noqa: ANN001
+    stop,  # noqa: ANN001
+    num=50,  # noqa: ANN001
+    endpoint=True,  # noqa: ANN001
+    retstep=False,  # noqa: ANN001
+    dtype=None,  # noqa: ANN001
+    axis=0,  # noqa: ANN001
     *,
-    device=None,
+    device=None,  # noqa: ANN001
 ):
-
     helper_result = _prepare_array_func_args(
         start,
         stop,
@@ -1638,8 +1813,15 @@ def linspace(
 
 
 @implements(np.logspace)
-def logspace(start, stop, num=50, endpoint=True, base=10.0, dtype=None, axis=0):
-
+def logspace(  # noqa: ANN202
+    start,  # noqa: ANN001
+    stop,  # noqa: ANN001
+    num=50,  # noqa: ANN001
+    endpoint=True,  # noqa: ANN001
+    base=10.0,  # noqa: ANN001
+    dtype=None,  # noqa: ANN001
+    axis=0,  # noqa: ANN001
+):  # noqa numpydoc ignore=GL08
     helper_result = _prepare_array_func_args(
         start, stop, num=num, endpoint=endpoint, base=base, dtype=dtype, axis=axis
     )
@@ -1654,8 +1836,7 @@ implements(np.geomspace)(
 
 
 @implements(np.copyto)
-def copyto(dst, src, casting="same_kind", where=True):
-
+def copyto(dst, src, casting="same_kind", where=True):  # noqa numpydoc ignore=GL08
     helper_result = _prepare_array_func_args(dst, src, casting=casting, where=where)
     if isinstance(src, objects.cosmo_array) and isinstance(dst, objects.cosmo_array):
         # if we're copyting across two
@@ -1671,16 +1852,15 @@ def copyto(dst, src, casting="same_kind", where=True):
 
 
 @implements(np.prod)
-def prod(
-    a,
-    axis=None,
-    dtype=None,
-    out=None,
-    keepdims=np._NoValue,
-    initial=np._NoValue,
-    where=np._NoValue,
+def prod(  # noqa numpydoc ignore=GL08
+    a,  # noqa: ANN001
+    axis=None,  # noqa: ANN001
+    dtype=None,  # noqa: ANN001
+    out=None,  # noqa: ANN001
+    keepdims=np._NoValue,  # noqa: ANN001
+    initial=np._NoValue,  # noqa: ANN001
+    where=np._NoValue,  # noqa: ANN001
 ):
-
     helper_result = _prepare_array_func_args(
         a,
         axis=axis,
@@ -1712,8 +1892,7 @@ implements(np.nanquantile)(
 
 
 @implements(np.linalg.det)
-def linalg_det(a):
-
+def linalg_det(a):  # noqa numpydoc ignore=GL08
     helper_result = _prepare_array_func_args(a)
     ret_cf = _power_cosmo_factor(helper_result["cfs"][0], None, power=a.shape[0])
     res = unyt_linalg_det(*helper_result["args"], **helper_result["kwargs"])
@@ -1727,8 +1906,7 @@ implements(np.ptp)(_default_unary_wrapper(unyt_ptp, _preserve_cosmo_factor))
 
 
 @implements(np.pad)
-def pad(array, pad_width, mode="constant", **kwargs):
-
+def pad(array, pad_width, mode="constant", **kwargs):  # noqa numpydoc ignore=GL08
     helper_result = _prepare_array_func_args(array, pad_width, mode=mode, **kwargs)
     # the number of options is huge, including user defined functions to handle data
     # let's just preserve the cosmo_factor of the input `array` and trust the user...
@@ -1738,8 +1916,7 @@ def pad(array, pad_width, mode="constant", **kwargs):
 
 
 @implements(np.choose)
-def choose(a, choices, out=None, mode="raise"):
-
+def choose(a, choices, out=None, mode="raise"):  # noqa numpydoc ignore=GL08
     helper_result = _prepare_array_func_args(a, choices, out=out, mode=mode)
     helper_result_choices = _prepare_array_func_args(*choices)
     ret_cf = _preserve_cosmo_factor(*helper_result_choices["cfs"])
@@ -1748,8 +1925,7 @@ def choose(a, choices, out=None, mode="raise"):
 
 
 @implements(np.insert)
-def insert(arr, obj, values, axis=None):
-
+def insert(arr, obj, values, axis=None):  # noqa numpydoc ignore=GL08
     helper_result = _prepare_array_func_args(arr, obj, values, axis=axis)
     ret_cf = _preserve_cosmo_factor(helper_result["cfs"][0], helper_result["cfs"][2])
     res = unyt_insert(*helper_result["args"], **helper_result["kwargs"])
@@ -1757,8 +1933,7 @@ def insert(arr, obj, values, axis=None):
 
 
 @implements(np.linalg.lstsq)
-def linalg_lstsq(a, b, rcond=None):
-
+def linalg_lstsq(a, b, rcond=None):  # noqa numpydoc ignore=GL08
     helper_result = _prepare_array_func_args(a, b, rcond=rcond)
     ret_cf = _divide_cosmo_factor(helper_result["cfs"][1], helper_result["cfs"][0])
     resid_cf = _power_cosmo_factor(helper_result["cfs"][1], None, power=2)
@@ -1773,8 +1948,7 @@ def linalg_lstsq(a, b, rcond=None):
 
 
 @implements(np.linalg.solve)
-def linalg_solve(a, b):
-
+def linalg_solve(a, b):  # noqa numpydoc ignore=GL08
     helper_result = _prepare_array_func_args(a, b)
     ret_cf = _divide_cosmo_factor(helper_result["cfs"][1], helper_result["cfs"][0])
     res = unyt_linalg_solve(*helper_result["args"], **helper_result["kwargs"])
@@ -1782,8 +1956,7 @@ def linalg_solve(a, b):
 
 
 @implements(np.linalg.tensorsolve)
-def linalg_tensorsolve(a, b, axes=None):
-
+def linalg_tensorsolve(a, b, axes=None):  # noqa numpydoc ignore=GL08
     helper_result = _prepare_array_func_args(a, b, axes=axes)
     ret_cf = _divide_cosmo_factor(helper_result["cfs"][1], helper_result["cfs"][0])
     res = unyt_linalg_tensorsolve(*helper_result["args"], **helper_result["kwargs"])
@@ -1791,8 +1964,7 @@ def linalg_tensorsolve(a, b, axes=None):
 
 
 @implements(np.linalg.eig)
-def linalg_eig(a):
-
+def linalg_eig(a):  # noqa numpydoc ignore=GL08
     helper_result = _prepare_array_func_args(a)
     ret_cf = _preserve_cosmo_factor(helper_result["cfs"][0])
     ress = unyt_linalg_eig(*helper_result["args"], **helper_result["kwargs"])
@@ -1800,8 +1972,7 @@ def linalg_eig(a):
 
 
 @implements(np.linalg.eigh)
-def linalg_eigh(a, UPLO="L"):
-
+def linalg_eigh(a, UPLO="L"):  # noqa numpydoc ignore=GL08
     helper_result = _prepare_array_func_args(a, UPLO=UPLO)
     ret_cf = _preserve_cosmo_factor(helper_result["cfs"][0])
     ress = unyt_linalg_eigh(*helper_result["args"], **helper_result["kwargs"])
@@ -1817,18 +1988,17 @@ implements(np.linalg.eigvalsh)(
 
 
 @implements(np.savetxt)
-def savetxt(
-    fname,
-    X,
-    fmt="%.18e",
-    delimiter=" ",
-    newline="\n",
-    header="",
-    footer="",
-    comments="# ",
-    encoding=None,
+def savetxt(  # noqa numpydoc ignore=GL08
+    fname,  # noqa: ANN001
+    X,  # noqa: ANN001
+    fmt="%.18e",  # noqa: ANN001
+    delimiter=" ",  # noqa: ANN001
+    newline="\n",  # noqa: ANN001
+    header="",  # noqa: ANN001
+    footer="",  # noqa: ANN001
+    comments="# ",  # noqa: ANN001
+    encoding=None,  # noqa: ANN001
 ):
-
     warnings.warn(
         "numpy.savetxt does not preserve units or cosmo_array information, "
         "and will only save the raw numerical data from the cosmo_array object.\n"
@@ -1858,7 +2028,7 @@ def savetxt(
 
 
 @implements(np.apply_over_axes)
-def apply_over_axes(func, a, axes):
+def apply_over_axes(func, a, axes):  # noqa numpydoc ignore=GL08
     res = func(a, axes[0])
     if len(axes) > 1:
         # this function is recursive by nature,
@@ -1869,8 +2039,7 @@ def apply_over_axes(func, a, axes):
 
 
 @implements(np.fill_diagonal)
-def fill_diagonal(a, val, wrap=False):
-
+def fill_diagonal(a, val, wrap=False):  # noqa numpydoc ignore=GL08
     helper_result = _prepare_array_func_args(a, val, wrap=wrap)
     _preserve_cosmo_factor(helper_result["cfs"][0], helper_result["cfs"][1])
     # must pass a directly here because it's modified in-place
@@ -1886,8 +2055,7 @@ implements(np.isin)(_default_comparison_wrapper(unyt_isin))
 
 
 @implements(np.place)
-def place(arr, mask, vals):
-
+def place(arr, mask, vals):  # noqa numpydoc ignore=GL08
     helper_result = _prepare_array_func_args(arr, mask, vals)
     _preserve_cosmo_factor(helper_result["cfs"][0], helper_result["cfs"][2])
     # must pass arr directly here because it's modified in-place
@@ -1901,8 +2069,7 @@ def place(arr, mask, vals):
 
 
 @implements(np.put)
-def put(a, ind, v, mode="raise"):
-
+def put(a, ind, v, mode="raise"):  # noqa numpydoc ignore=GL08
     helper_result = _prepare_array_func_args(a, ind, v, mode=mode)
     _preserve_cosmo_factor(helper_result["cfs"][0], helper_result["cfs"][2])
     # must pass arr directly here because it's modified in-place
@@ -1916,8 +2083,7 @@ def put(a, ind, v, mode="raise"):
 
 
 @implements(np.put_along_axis)
-def put_along_axis(arr, indices, values, axis):
-
+def put_along_axis(arr, indices, values, axis):  # noqa numpydoc ignore=GL08
     helper_result = _prepare_array_func_args(arr, indices, values, axis)
     _preserve_cosmo_factor(helper_result["cfs"][0], helper_result["cfs"][2])
     # must pass arr directly here because it's modified in-place
@@ -1931,8 +2097,7 @@ def put_along_axis(arr, indices, values, axis):
 
 
 @implements(np.putmask)
-def putmask(a, mask, values):
-
+def putmask(a, mask, values):  # noqa numpydoc ignore=GL08
     helper_result = _prepare_array_func_args(a, mask, values)
     _preserve_cosmo_factor(helper_result["cfs"][0], helper_result["cfs"][2])
     # must pass arr directly here because it's modified in-place
@@ -1951,8 +2116,7 @@ implements(np.searchsorted)(
 
 
 @implements(np.select)
-def select(condlist, choicelist, default=0):
-
+def select(condlist, choicelist, default=0):  # noqa numpydoc ignore=GL08
     helper_result = _prepare_array_func_args(condlist, choicelist, default=default)
     helper_result_choicelist = _prepare_array_func_args(*choicelist)
     ret_cf = _preserve_cosmo_factor(*helper_result_choicelist["cfs"])
@@ -1970,25 +2134,23 @@ implements(np.setdiff1d)(
 
 
 @implements(np.sinc)
-def sinc(x):
-
+def sinc(x):  # noqa numpydoc ignore=GL08
     # unyt just casts to array and calls the numpy implementation
     # so let's just hand off to them
     return unyt_sinc(x)
 
 
 @implements(np.clip)
-def clip(
-    a,
-    a_min=np._NoValue,
-    a_max=np._NoValue,
-    out=None,
+def clip(  # noqa numpydoc ignore=GL08
+    a,  # noqa: ANN001
+    a_min=np._NoValue,  # noqa: ANN001
+    a_max=np._NoValue,  # noqa: ANN001
+    out=None,  # noqa: ANN001
     *,
-    min=np._NoValue,
-    max=np._NoValue,
-    **kwargs,
+    min=np._NoValue,  # noqa: ANN001
+    max=np._NoValue,  # noqa: ANN001
+    **kwargs,  # noqa: ANN003
 ):
-
     # can't work out how to properly handle min and max,
     # just leave them in kwargs I guess (might be a numpy version conflict?)
     helper_result = _prepare_array_func_args(
@@ -2010,8 +2172,7 @@ def clip(
 
 
 @implements(np.where)
-def where(condition, *args):
-
+def where(condition, *args):  # noqa numpydoc ignore=GL08
     helper_result = _prepare_array_func_args(condition, *args)
     if len(args) == 0:  # just condition
         ret_cf = _return_without_cosmo_factor(helper_result["cfs"][0])
@@ -2029,16 +2190,15 @@ implements(np.tril)(_default_unary_wrapper(unyt_tril, _preserve_cosmo_factor))
 
 
 @implements(np.einsum)
-def einsum(
-    subscripts,
-    *operands,
-    out=None,
-    dtype=None,
-    order="K",
-    casting="safe",
-    optimize=False,
+def einsum(  # noqa numpydoc ignore=GL08
+    subscripts,  # noqa: ANN001
+    *operands,  # noqa: ANN002
+    out=None,  # noqa: ANN001
+    dtype=None,  # noqa: ANN001
+    order="K",  # noqa: ANN001
+    casting="safe",  # noqa: ANN001
+    optimize=False,  # noqa: ANN001
 ):
-
     helper_result = _prepare_array_func_args(
         subscripts,
         operands,
@@ -2068,8 +2228,13 @@ implements(np.tensordot)(
 
 
 @implements(np.unwrap)
-def unwrap(p, discont=None, axis=-1, *, period=6.283_185_307_179_586):
-
+def unwrap(  # noqa: ANN202
+    p,  # noqa: ANN001
+    discont=None,  # noqa: ANN001
+    axis=-1,  # noqa: ANN001
+    *,
+    period=6.283_185_307_179_586,  # noqa: ANN001
+):  # noqa numpydoc ignore=GL08
     helper_result = _prepare_array_func_args(
         p, discont=discont, axis=axis, period=period
     )
@@ -2083,8 +2248,7 @@ def unwrap(p, discont=None, axis=-1, *, period=6.283_185_307_179_586):
 
 
 @implements(np.interp)
-def interp(x, xp, fp, left=None, right=None, period=None):
-
+def interp(x, xp, fp, left=None, right=None, period=None):  # noqa numpydoc ignore=GL08
     helper_result = _prepare_array_func_args(
         x, xp, fp, left=left, right=right, period=period
     )
@@ -2094,8 +2258,12 @@ def interp(x, xp, fp, left=None, right=None, period=None):
 
 
 @implements(np.array_repr)
-def array_repr(arr, max_line_width=None, precision=None, suppress_small=None):
-
+def array_repr(  # noqa: ANN202
+    arr,  # noqa: ANN001
+    max_line_width=None,  # noqa: ANN001
+    precision=None,  # noqa: ANN001
+    suppress_small=None,  # noqa: ANN001
+):  # noqa numpydoc ignore=GL08
     helper_result = _prepare_array_func_args(
         arr,
         max_line_width=max_line_width,
@@ -2119,8 +2287,7 @@ implements(np.linalg.outer)(
 
 
 @implements(np.trapezoid)
-def trapezoid(y, x=None, dx=1.0, axis=-1):
-
+def trapezoid(y, x=None, dx=1.0, axis=-1):  # noqa numpydoc ignore=GL08
     helper_result = _prepare_array_func_args(y, x=x, dx=dx, axis=axis)
     if x is None:
         ret_cf = _multiply_cosmo_factor(
@@ -2134,14 +2301,46 @@ def trapezoid(y, x=None, dx=1.0, axis=-1):
     return _return_helper(res, helper_result, ret_cf)
 
 
-implements(np.isin)(_default_comparison_wrapper(unyt_in1d))
+implements(np.isin)(_default_comparison_wrapper(unyt_isin))
 implements(np.take)(_default_unary_wrapper(unyt_take, _preserve_cosmo_factor))
 
 # Now we wrap functions that unyt does not handle explicitly:
 
-implements(np.average)(
-    _propagate_cosmo_array_attributes_to_result(np.average._implementation)
-)
+
+@implements(np.average)
+def average(a, axis=None, weights=None, returned=False, *, keepdims=np._NoValue):  # noqa numpydoc ignore=GL08
+    # Average suffered from a bug
+    # (https://github.com/SWIFTSIM/swiftsimio/issues/285)
+    # Correct results depend on unyt>=3.1.0
+    # (https://github.com/yt-project/unyt/pull/611)
+    # There is also a fix in numpy>=3.4.1
+    # (https://github.com/numpy/numpy/pull/30522)
+    # that means we no longer need any special handling here, but to support older
+    # versions we need a patch.
+    helper_result = _prepare_array_func_args(
+        a, axis=axis, weights=weights, returned=returned, keepdims=keepdims
+    )
+    if NUMPY_VERSION < Version("2.4.1"):
+        from unyt._array_functions import average as super_average
+
+    else:
+        super_average = np.average._implementation
+
+    res = super_average(
+        a, axis=axis, weights=weights, returned=returned, keepdims=keepdims
+    )
+    ret_cf_avg = _preserve_cosmo_factor(helper_result["cfs"][0])
+    if returned:
+        avg, wsum = res
+        ret_cf_wsum = _preserve_cosmo_factor(helper_result["kw_cfs"]["weights"])
+        return (
+            _return_helper(avg, helper_result, ret_cf_avg),
+            _return_helper(wsum, helper_result, ret_cf_wsum),
+        )
+    else:
+        return _return_helper(res, helper_result, ret_cf_avg)
+
+
 implements(np.max)(_propagate_cosmo_array_attributes_to_result(np.max._implementation))
 implements(np.min)(_propagate_cosmo_array_attributes_to_result(np.min._implementation))
 implements(np.mean)(
@@ -2160,7 +2359,7 @@ implements(np.partition)(
 
 
 @implements(np.meshgrid)
-def meshgrid(*xi, **kwargs):
+def meshgrid(*xi, **kwargs):  # noqa numpydoc ignore=GL08
     # meshgrid is a unique case: arguments never interact with each other, so we don't
     # want to use our _prepare_array_func_args helper (that will try to coerce to
     # compatible comoving, cosmo_factor).
@@ -2170,3 +2369,27 @@ def meshgrid(*xi, **kwargs):
     return tuple(
         _copy_cosmo_array_attributes_if_present(x, r) for (x, r) in zip(xi, res)
     )
+
+
+# wrap array creation functions that take a `like` kwarg
+implements(np.arange)(_array_like_wrapper(np.arange))
+implements(np.empty)(_array_like_wrapper(np.empty))
+implements(np.ones)(_array_like_wrapper(np.ones))
+implements(np.zeros)(_array_like_wrapper(np.zeros))
+implements(np.full)(_array_like_wrapper(np.full))
+implements(np.array)(_array_like_wrapper(np.array))
+implements(np.asarray)(_array_like_wrapper(np.asarray))
+implements(np.asanyarray)(_array_like_wrapper(np.asanyarray))
+implements(np.ascontiguousarray)(_array_like_wrapper(np.ascontiguousarray))
+implements(np.asfortranarray)(_array_like_wrapper(np.asfortranarray))
+implements(np.require)(_array_like_wrapper(np.require))
+implements(np.fromfunction)(_array_like_wrapper(np.fromfunction))
+implements(np.fromstring)(_array_like_wrapper(np.fromstring))
+implements(np.fromiter)(_array_like_wrapper(np.fromiter))
+implements(np.fromfile)(_array_like_wrapper(np.fromfile))
+implements(np.frombuffer)(_array_like_wrapper(np.frombuffer))
+implements(np.identity)(_array_like_wrapper(np.identity))
+implements(np.loadtxt)(_array_like_wrapper(np.loadtxt))
+implements(np.genfromtxt)(_array_like_wrapper(np.genfromtxt))
+implements(np.eye)(_array_like_wrapper(np.eye))
+implements(np.tri)(_array_like_wrapper(np.tri))
