@@ -10,7 +10,6 @@ from swiftsimio.accelerated import jit, NUM_THREADS, prange
 
 from swiftsimio.visualisation.slice_backends.sph import kernel, kernel_gamma
 
-
 @jit(nopython=True, fastmath=True)
 def scatter(
     x: np.float64,

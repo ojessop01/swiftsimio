@@ -2134,7 +2134,7 @@ def trapezoid(y, x=None, dx=1.0, axis=-1):
     return _return_helper(res, helper_result, ret_cf)
 
 
-implements(np.in1d)(_default_comparison_wrapper(unyt_in1d))
+implements(np.isin)(_default_comparison_wrapper(unyt_in1d))
 implements(np.take)(_default_unary_wrapper(unyt_take, _preserve_cosmo_factor))
 
 # Now we wrap functions that unyt does not handle explicitly:

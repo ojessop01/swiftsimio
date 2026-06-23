@@ -5,6 +5,7 @@ of the particles and projects them onto a grid.
 
 from typing import List, Literal, Tuple, Union
 from math import sqrt, exp, pi
+from warnings import warn
 import numpy as np
 from swiftsimio import SWIFTDataset, cosmo_array
 from swiftsimio.accelerated import jit
@@ -30,6 +31,9 @@ def render_gas(
     rotation_center: Union[None, cosmo_array] = None,
     region: Union[None, cosmo_array] = None,
     periodic: bool = True,
+    backend: str = "scatter",
+    ntarget: Union[int, None] = None,
+    nlevels: Union[int, None] = None,
 ):
     """
     Creates a 3D render of a SWIFT dataset, weighted by data field, in the
@@ -77,6 +81,26 @@ def render_gas(
         Account for periodic boundaries for the simulation box?
         Default is ``True``.
 
+    backend : str, optional
+        The scatter backend to use.  Available backends are ``"scatter"``
+        (default, standard single-resolution) and ``"nested"`` (nested
+        multi-resolution, faster for simulations with wide smoothing-length
+        distributions).
+
+    ntarget : int, optional
+        Only used with ``backend="nested"``.  Target number of voxels per
+        kernel compact-support diameter at each level of the nested grid
+        hierarchy.  Default is 6.  Larger values improve accuracy at
+        increased cost.  A ``UserWarning`` is raised if this is set without
+        ``backend="nested"``.
+
+    nlevels : int, optional
+        Only used with ``backend="nested"``.  Number of coarsening levels in
+        the nested grid hierarchy.  Default is 4.  ``resolution`` must be
+        divisible by ``2**nlevels`` (e.g. a multiple of 16 for the default).
+        A ``UserWarning`` is raised if this is set without
+        ``backend="nested"``.
+
     Returns
     -------
     cosmo_array
@@ -89,6 +113,24 @@ def render_gas(
     slice_gas_pixel_grid : Creates a 2D slice of a SWIFT dataset
 
     """
+    if backend != "nested" and (ntarget is not None or nlevels is not None):
+        warn(
+            "ntarget and nlevels are only used with backend='nested'. "
+            "These parameters will be ignored.",
+            UserWarning,
+        )
+
+    # Apply defaults for nested-backend parameters
+    ntarget = 6 if ntarget is None else int(ntarget)
+    nlevels = 4 if nlevels is None else int(nlevels)
+
+    available_backends = list((backends_parallel if parallel else backends).keys())
+    if backend not in available_backends:
+        raise ValueError(
+            f"Unknown backend '{backend}'. "
+            f"Available backends: {', '.join(available_backends)}."
+        )
+
     data = data.gas
 
     m = _get_projection_field(data, project)
@@ -117,8 +159,12 @@ def render_gas(
         box_y=region_info["periodic_box_y"],
         box_z=region_info["periodic_box_z"],
     )
+    if backend == "nested":
+        kwargs["ntarget"] = ntarget
+        kwargs["nlevels"] = nlevels
+
     norm = region_info["x_range"] * region_info["y_range"] * region_info["z_range"]
-    backend_func = (backends_parallel if parallel else backends)["scatter"]
+    backend_func = (backends_parallel if parallel else backends)[backend]
     image = backend_restore_cosmo_and_units(backend_func, norm=norm)(**kwargs)
 
     return image
