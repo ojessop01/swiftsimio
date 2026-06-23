@@ -192,9 +192,7 @@ def _propagate_cosmo_array_attributes_to_result(func: Callable) -> Callable:
     """
 
     def wrapped(
-        obj: object,
-        *args: tuple[Any],
-        **kwargs: dict[str, Any],
+        obj: object, *args: tuple[Any], **kwargs: dict[str, Any]
     ) -> object:  # noqa numpydoc ignore=GL08
         # omit docstring so that sphinx picks up docstring of wrapped function
         return _copy_cosmo_array_attributes_if_present(obj, func(obj, *args, **kwargs))
@@ -287,7 +285,9 @@ def _ensure_result_is_cosmo_array_or_quantity(func: Callable) -> Callable:
         The wrapped function.
     """
 
-    def wrapped(*args: tuple[Any], **kwargs: dict[str, Any]) -> object:  # noqa numpydoc ignore=GL08
+    def wrapped(
+        *args: tuple[Any], **kwargs: dict[str, Any]
+    ) -> object:  # noqa numpydoc ignore=GL08
         # omit docstring so that sphinx picks up docstring of wrapped function
         result = func(*args, **kwargs)
         if isinstance(result, tuple):
@@ -774,18 +774,18 @@ def _arctan2_cosmo_factor(
             f" provided cosmo_factor ({cf2}) for all arguments.",
             RuntimeWarning,
         )
-        return objects.cosmo_factor(objects.a**0, scale_factor=cf2.scale_factor)
+        return objects.cosmo_factor(objects.a ** 0, scale_factor=cf2.scale_factor)
     elif (cf1 is not None) and (cf2 is None):
         warnings.warn(
             f"Mixing arguments with and without cosmo_factors, continuing assuming"
             f" provided cosmo_factor ({cf1}) for all arguments.",
             RuntimeWarning,
         )
-        return objects.cosmo_factor(objects.a**0, scale_factor=cf1.scale_factor)
+        return objects.cosmo_factor(objects.a ** 0, scale_factor=cf1.scale_factor)
     elif (cf1 is not None) and (cf2 is not None) and (cf1 != cf2):
         raise ValueError(f"Arguments have cosmo_factors that differ: {cf1} and {cf2}.")
     elif (cf1 is not None) and (cf2 is not None) and (cf1 == cf2):
-        return objects.cosmo_factor(objects.a**0, scale_factor=cf1.scale_factor)
+        return objects.cosmo_factor(objects.a ** 0, scale_factor=cf1.scale_factor)
 
 
 def _comparison_cosmo_factor(
@@ -1351,6 +1351,13 @@ implements(np.outer)(_default_binary_wrapper(unyt_outer, _multiply_cosmo_factor)
 implements(np.kron)(_default_binary_wrapper(unyt_kron, _multiply_cosmo_factor))
 
 
+def _coerce_bins_units(bins, sample_unit):
+    """Attach ``sample_unit`` to ``bins`` if it is a plain numpy array."""
+    if isinstance(bins, np.ndarray) and not isinstance(bins, unyt_array):
+        return unyt_array(bins, sample_unit)
+    return bins
+
+
 @implements(np.histogram_bin_edges)
 def histogram_bin_edges(  # noqa: ANN202
     a,  # noqa: ANN001
@@ -1398,6 +1405,9 @@ def histogram(  # noqa: ANN202
     )
     ret_cf_bins = _preserve_cosmo_factor(helper_result["cfs"][0])
     ret_cf_dens = _reciprocal_cosmo_factor(helper_result["cfs"][0])
+    helper_result["kwargs"]["bins"] = _coerce_bins_units(
+        helper_result["kwargs"]["bins"], helper_result["args"][0].units
+    )
     counts, bins = unyt_histogram(*helper_result["args"], **helper_result["kwargs"])
     if weights is not None:
         ret_cf_w = _preserve_cosmo_factor(helper_result["kw_cfs"]["weights"])
@@ -1455,7 +1465,14 @@ def histogram2d(  # noqa: ANN202
         counts, xbins, ybins = unyt_histogram2d(
             helper_result_x["args"][0],
             helper_result_y["args"][0],
-            bins=(helper_result_x["kwargs"]["bins"], helper_result_y["kwargs"]["bins"]),
+            bins=(
+                _coerce_bins_units(
+                    helper_result_x["kwargs"]["bins"], helper_result_x["args"][0].units
+                ),
+                _coerce_bins_units(
+                    helper_result_y["kwargs"]["bins"], helper_result_y["args"][0].units
+                ),
+            ),
             range=safe_range,
             density=density,
             weights=helper_result_w["kwargs"]["weights"],
@@ -1496,7 +1513,14 @@ def histogram2d(  # noqa: ANN202
         counts, xbins, ybins = unyt_histogram2d(
             helper_result["args"][0],
             helper_result["args"][1],
-            bins=(helper_result["kwargs"]["xbins"], helper_result["kwargs"]["ybins"]),
+            bins=(
+                _coerce_bins_units(
+                    helper_result["kwargs"]["xbins"], helper_result["args"][0].units
+                ),
+                _coerce_bins_units(
+                    helper_result["kwargs"]["ybins"], helper_result["args"][1].units
+                ),
+            ),
             range=safe_range,
             density=density,
             weights=helper_result["kwargs"]["weights"],
@@ -1565,7 +1589,10 @@ def histogramdd(  # noqa: ANN202
             ]
         counts, bins = unyt_histogramdd(
             [helper_result["args"][0] for helper_result in helper_results],
-            bins=[helper_result["kwargs"]["bins"] for helper_result in helper_results],
+            bins=[
+                _coerce_bins_units(hr["kwargs"]["bins"], hr["args"][0].units)
+                for hr in helper_results
+            ],
             range=safe_range,
             density=density,
             weights=helper_result_w["kwargs"]["weights"],
@@ -1587,7 +1614,10 @@ def histogramdd(  # noqa: ANN202
         ret_cfs = D * [_preserve_cosmo_factor(helper_result["cfs"][0])]
         counts, bins = unyt_histogramdd(
             helper_result["args"],
-            bins=helper_result["kwargs"]["bins"],
+            bins=[
+                _coerce_bins_units(b, s.units)
+                for b, s in zip(helper_result["kwargs"]["bins"], helper_result["args"])
+            ],
             range=helper_result["kwargs"]["range"],
             density=density,
             weights=helper_result["kwargs"]["weights"],
@@ -2308,7 +2338,9 @@ implements(np.take)(_default_unary_wrapper(unyt_take, _preserve_cosmo_factor))
 
 
 @implements(np.average)
-def average(a, axis=None, weights=None, returned=False, *, keepdims=np._NoValue):  # noqa numpydoc ignore=GL08
+def average(
+    a, axis=None, weights=None, returned=False, *, keepdims=np._NoValue
+):  # noqa numpydoc ignore=GL08
     # Average suffered from a bug
     # (https://github.com/SWIFTSIM/swiftsimio/issues/285)
     # Correct results depend on unyt>=3.1.0

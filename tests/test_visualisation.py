@@ -959,6 +959,171 @@ class TestVolumeRender:
         )
 
 
+class TestNestedVolumeRender:
+    def test_volume_render(self):
+        scatter = volume_render_backends["nested"]
+        scatter(
+            x=np.array([0.0, 1.0, 1.0, -0.000_001]),
+            y=np.array([0.0, 0.0, 1.0, 1.000_001]),
+            z=np.array([0.0, 0.0, 1.0, 1.000_001]),
+            m=np.array([1.0, 1.0, 1.0, 1.0]),
+            h=np.array([0.2, 0.2, 0.2, 0.000_002]),
+            res=64,
+            box_x=1.0,
+            box_y=1.0,
+            box_z=1.0,
+        )
+
+    def test_volume_parallel(self):
+        number_of_parts = 1000
+        h_max = np.float32(0.05)
+        resolution = 64
+
+        coordinates = (
+            np.random.rand(3 * number_of_parts)
+            .reshape((3, number_of_parts))
+            .astype(np.float64)
+        )
+        hsml = np.random.rand(number_of_parts).astype(np.float32) * h_max
+        masses = np.ones(number_of_parts, dtype=np.float32)
+
+        scatter = volume_render_backends["nested"]
+        image = scatter(
+            x=coordinates[0],
+            y=coordinates[1],
+            z=coordinates[2],
+            m=masses,
+            h=hsml,
+            res=resolution,
+            box_x=1.0,
+            box_y=1.0,
+            box_z=1.0,
+        )
+        scatter_parallel = volume_render_backends_parallel["nested"]
+        image_par = scatter_parallel(
+            x=coordinates[0],
+            y=coordinates[1],
+            z=coordinates[2],
+            m=masses,
+            h=hsml,
+            res=resolution,
+            box_x=1.0,
+            box_y=1.0,
+            box_z=1.0,
+        )
+
+        assert np.isclose(image, image_par).all()
+
+    def test_periodic_boundary_wrapping(self):
+        voxel_resolution = 16
+        boxsize = 1.0
+
+        coordinates_periodic = np.array([[0.1, 0.5, 0.5]])
+        hsml_periodic = np.array([0.2])
+        masses_periodic = np.array([1.0])
+
+        coordinates_non_periodic = np.array([[0.1, 0.5, 0.5], [1.1, 0.5, 0.5]])
+        hsml_non_periodic = np.array([0.2, 0.2])
+        masses_non_periodic = np.array([1.0, 1.0])
+
+        scatter = volume_render_backends["nested"]
+        image1 = scatter(
+            x=coordinates_periodic[:, 0],
+            y=coordinates_periodic[:, 1],
+            z=coordinates_periodic[:, 2],
+            m=masses_periodic,
+            h=hsml_periodic,
+            res=voxel_resolution,
+            box_x=boxsize,
+            box_y=boxsize,
+            box_z=boxsize,
+        )
+        image2 = scatter(
+            x=coordinates_non_periodic[:, 0],
+            y=coordinates_non_periodic[:, 1],
+            z=coordinates_non_periodic[:, 2],
+            m=masses_non_periodic,
+            h=hsml_non_periodic,
+            res=voxel_resolution,
+            box_x=0.0,
+            box_y=0.0,
+            box_z=0.0,
+        )
+
+        assert (image1 == image2).all()
+
+    def test_agrees_with_scatter_at_high_ntarget(self):
+        """
+        When ntarget is large (e.g. 20), every particle is assigned to level 0
+        (the finest grid), so the nested backend should produce the same result
+        as the standard scatter backend.
+        """
+        number_of_parts = 500
+        h_max = np.float32(0.03)
+        resolution = 32
+
+        rng = np.random.default_rng(42)
+        coordinates = rng.random((3, number_of_parts)).astype(np.float64)
+        hsml = (rng.random(number_of_parts).astype(np.float32) * h_max).clip(1e-4)
+        masses = np.ones(number_of_parts, dtype=np.float32)
+
+        image_scatter = volume_render_backends["scatter"](
+            x=coordinates[0],
+            y=coordinates[1],
+            z=coordinates[2],
+            m=masses,
+            h=hsml,
+            res=resolution,
+            box_x=1.0,
+            box_y=1.0,
+            box_z=1.0,
+        )
+        image_nested = volume_render_backends["nested"](
+            x=coordinates[0],
+            y=coordinates[1],
+            z=coordinates[2],
+            m=masses,
+            h=hsml,
+            res=resolution,
+            box_x=1.0,
+            box_y=1.0,
+            box_z=1.0,
+            ntarget=20,
+        )
+
+        assert np.allclose(image_scatter, image_nested, rtol=1e-4, atol=1e-6)
+
+    def test_mass_conservation(self):
+        """
+        Total mass deposited by the nested backend should equal total input mass
+        to within floating-point precision.
+        """
+        number_of_parts = 1000
+        resolution = 32
+
+        rng = np.random.default_rng(7)
+        coordinates = rng.random((3, number_of_parts)).astype(np.float64)
+        hsml = (rng.random(number_of_parts).astype(np.float32) * 0.05).clip(1e-4)
+        masses = rng.random(number_of_parts).astype(np.float32)
+
+        scatter = volume_render_backends["nested"]
+        image = scatter(
+            x=coordinates[0],
+            y=coordinates[1],
+            z=coordinates[2],
+            m=masses,
+            h=hsml,
+            res=resolution,
+            box_x=1.0,
+            box_y=1.0,
+            box_z=1.0,
+        )
+
+        cell_volume = (1.0 / resolution) ** 3
+        deposited_mass = float(image.sum()) * cell_volume
+        assert np.isclose(deposited_mass, float(masses.sum()), rtol=1e-3)
+
+
 def test_selection_render(cosmological_volume_only_single):
     data = load(cosmological_volume_only_single)
     bs = data.metadata.boxsize[0]

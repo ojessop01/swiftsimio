@@ -55,9 +55,14 @@ kernel_gamma = float32(1.936492)
 # ---------------------------------------------------------------------------
 # Optimised serial path
 # --------------------------------------------------------------------------
-
-
-@njit(fastmath=True, cache=True, nogil=True, boundscheck=False, error_model="numpy", inline="always")
+@njit(
+    fastmath=True,
+    cache=True,
+    nogil=True,
+    boundscheck=False,
+    error_model="numpy",
+    inline="always",
+)
 def _serial_level(hsml, support_scale, target, nlevels):
     """Assign one particle without log2 or repeated scale calculations."""
     support_cells = hsml * support_scale
@@ -87,7 +92,14 @@ def _assign_serial_levels(h, m, res, ntarget, nlevels):
     return level_index, deepest
 
 
-@njit(fastmath=True, cache=True, nogil=True, boundscheck=False, error_model="numpy", inline="always")
+@njit(
+    fastmath=True,
+    cache=True,
+    nogil=True,
+    boundscheck=False,
+    error_model="numpy",
+    inline="always",
+)
 def _deposit_particle_flat(
     destination,
     level_offset,
@@ -362,13 +374,7 @@ def _scatter_serial_flat_periodic(
 
 @njit(fastmath=True, cache=True, nogil=True, boundscheck=False, error_model="numpy")
 def _collapse_serial_flat(
-    finest,
-    coarse,
-    level_offsets,
-    level_resolutions,
-    nlevels,
-    bounds_min,
-    bounds_max,
+    finest, coarse, level_offsets, level_resolutions, nlevels, bounds_min, bounds_max
 ):
     """Collapse only occupied regions, using paired z writes and reused loads."""
     finest_cells = finest.size
@@ -684,7 +690,7 @@ def _prepare_particle_arrays(x, y, z, m, h):
     return tuple(np.ascontiguousarray(array, dtype=float32) for array in arrays)
 
 
-@njit(nopython=True, fastmath=True, parallel=True)
+@njit(fastmath=True, parallel=True)
 def _scatter_parallel_impl(
     x: np.ndarray,
     y: np.ndarray,
@@ -761,31 +767,11 @@ def scatter_parallel(
 
     if get_num_threads() == 1:
         return _scatter_prepared(
-            x,
-            y,
-            z,
-            m,
-            h,
-            res,
-            box_x,
-            box_y,
-            box_z,
-            ntarget,
-            nlevels,
+            x, y, z, m, h, res, box_x, box_y, box_z, ntarget, nlevels
         )
 
     return _scatter_parallel_impl(
-        x,
-        y,
-        z,
-        m,
-        h,
-        res,
-        box_x,
-        box_y,
-        box_z,
-        ntarget,
-        nlevels,
+        x, y, z, m, h, res, box_x, box_y, box_z, ntarget, nlevels
     )
 
 

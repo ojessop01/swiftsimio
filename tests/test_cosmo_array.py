@@ -836,6 +836,16 @@ class TestNumpyFunctions:
             if not isinstance(bins, tuple)
             else tuple(to_ua(item) for item in bins)
         )
+        if bins_type == "np":
+            # plain numpy bins are dimensionless; attach sample units so unyt
+            # can process them alongside data that has units
+            flat_ua_args = list(ua_args[0] if func == np.histogramdd else ua_args)
+            if isinstance(ua_bins, list):
+                ua_bins = [
+                    u.unyt_array(b, s.units) for b, s in zip(ua_bins, flat_ua_args)
+                ]
+            else:
+                ua_bins = u.unyt_array(ua_bins, flat_ua_args[0].units)
         ua_result = func(
             *ua_args, bins=ua_bins, density=density, weights=to_ua(weights)
         )
