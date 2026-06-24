@@ -380,6 +380,246 @@ Once you have this base image, you can always use your photo editor to tweak it 
 In particular, open the 'levels' panel and play around with the sliders!
 
 
+Backends
+--------
+
+Two scatter backends are available, selected via the ``backend`` argument to
+:func:`~swiftsimio.visualisation.volume_render.render_voxel_grid` and
+:func:`~swiftsimio.visualisation.volume_render.render_gas`:
+
+* ``"scatter"`` — the default, standard single-resolution backend.
+* ``"nested"`` — the nested multi-resolution backend, described in detail
+  below. This is faster for simulations with a wide range of smoothing
+  lengths, such as zoom-in runs or boxes containing both high-density gas
+  and diffuse IGM.
+
+.. code-block:: python
+
+   from swiftsimio import load
+   from swiftsimio.visualisation.volume_render import render_gas
+
+   data = load("cosmo_volume_example.hdf5")
+
+   # Standard backend — identical results, familiar behaviour.
+   mass_grid_standard = render_gas(
+       data,
+       resolution=256,
+       project="masses",
+       parallel=True,
+       backend="scatter",
+   )
+
+   # Nested backend — faster for wide smoothing-length distributions.
+   mass_grid_nested = render_gas(
+       data,
+       resolution=256,
+       project="masses",
+       parallel=True,
+       backend="nested",
+       ntarget=6,    # target voxels per kernel diameter at each level
+       nlevels=4,    # number of coarsening levels (requires res % 2**nlevels == 0)
+   )
+
+
+Nested multi-resolution backend
+~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~
+
+Motivation
+^^^^^^^^^^
+
+In the standard scatter backend every particle visits every voxel within its
+kernel compact-support radius. For a particle whose smoothing length spans
+:math:`N` voxels in each dimension, the cost is :math:`\mathcal{O}(N^3)`.
+Simulations with large dynamic ranges in smoothing length — zoom-in
+simulations, or cosmological volumes that include both dense filaments and
+low-density IGM — contain particles whose kernels span tens or hundreds of
+voxels. These few large particles can completely dominate the total rendering
+time even though they represent only a tiny fraction of the particle count.
+
+The nested backend bounds the per-particle cost at
+:math:`\mathcal{O}(n_\mathrm{target}^3)` regardless of smoothing length by
+scattering large particles onto a coarser grid and trilinearly upsampling
+the result back to the finest grid afterwards. This follows the Sparse
+Multi-Scale Grid approach described in Benitez-Llambay (2025).
+
+Algorithm
+^^^^^^^^^
+
+The pipeline has four stages.
+
+**1. Level assignment.**
+For each particle, the number of finest-grid cells spanned by its kernel
+compact-support radius is estimated:
+
+.. math::
+
+   N_\mathrm{cells} = \gamma_k \, h \, r
+
+where :math:`\gamma_k = 1.936492` is the Wendland-C2 kernel gamma and
+:math:`r` is ``res``. The particle is then assigned to hierarchy level
+:math:`L`:
+
+.. math::
+
+   L = \mathrm{clip}\!\left(\left\lceil \log_2 \frac{N_\mathrm{cells}}{n_\mathrm{target}} \right\rceil,\; 0,\; L_\mathrm{max}\right)
+
+Level 0 is the finest grid (resolution ``res``); level :math:`L` uses a grid
+of resolution :math:`r / 2^L`. At their assigned level every kernel spans
+approximately ``ntarget`` voxels per axis, keeping the number of voxels
+visited per particle bounded.
+
+The hierarchy for ``res=512``, ``nlevels=4`` looks like this::
+
+   Level 0 (finest)    512 × 512 × 512   — small, well-resolved kernels
+   Level 1             256 × 256 × 256
+   Level 2             128 × 128 × 128
+   Level 3              64 ×  64 ×  64
+   Level 4 (coarsest)   32 ×  32 ×  32   — very large, diffuse kernels
+
+**2. Scatter.**
+Each particle is scattered onto its assigned level using the 3-D Wendland-C2
+kernel — the same kernel used by the standard backend. Periodic wrapping is
+handled identically: particles are deposited once per periodic image whose
+kernel support overlaps ``[0, 1]``. Level-0 particles write directly into the
+finest output grid; coarser particles write into a flat array that stores all
+coarse levels back-to-back.
+
+**3. Collapse.**
+After all particles have been deposited, the hierarchy is collapsed
+coarse-to-fine (from level :math:`L_\mathrm{max}` down to level 1). Each
+coarse cell is trilinearly upsampled and its contribution added to the next
+finer grid. The upsampling stencil is::
+
+   fine index 2i   draws 3/4 from coarse[i] and 1/4 from coarse[i-1]
+   fine index 2i+1 draws 3/4 from coarse[i] and 1/4 from coarse[i+1]
+
+applied independently in each of x, y, z, giving a separable
+trilinear interpolation. Only the bounding box of voxels that actually
+received mass is upsampled at each level, so the collapse cost scales with
+the number of particles rather than the grid volume.
+
+**4. Return.**
+The finest grid, which now contains contributions from all levels, is
+returned as the output.
+
+Accuracy
+^^^^^^^^
+
+The nested backend is an approximation: a particle at level :math:`L > 0`
+deposits mass onto a coarser grid and that mass is then spread across the fine
+grid by trilinear upsampling. The smoothed field seen by the finest grid is
+therefore a convolution of the true kernel with the upsampling stencil. For
+typical ``ntarget`` values of 4–10 the error in the reconstructed density
+field is at the few-percent level in individual voxels.
+
+A subtler source of per-voxel differences arises from floating-point
+arithmetic. When the same snapshot is rendered with different region bounds or
+at different absolute resolutions, normalised particle positions differ in
+float64, and a particle very close to a voxel boundary can land in different
+cells. This affects roughly 2–3% of voxels and produces large relative errors
+in those cells (which individually carry very little mass). If per-voxel
+fidelity at the sub-percent level matters, either increase ``ntarget`` or use
+the standard ``"scatter"`` backend.
+
+For integrated quantities — total mass, flux, or projected density — both
+backends are mass-conserving to floating-point precision.
+
+Resolution constraint
+^^^^^^^^^^^^^^^^^^^^^
+
+Because each level coarsens by exactly a factor of two, ``res`` must be
+divisible by :math:`2^{\text{nlevels}}`. With the default ``nlevels=4`` this
+requires ``res`` to be a multiple of 16 (e.g. 128, 256, 512, 1024). Passing
+an incompatible combination raises a ``ValueError`` with a suggestion of the
+nearest valid ``res`` and the maximum supported ``nlevels`` for the given
+``res``.
+
+Memory usage
+^^^^^^^^^^^^
+
+The nested backend allocates one finest grid (:math:`r^3` float32 values) plus
+a flat array for all coarse levels combined. The coarse array has total size
+
+.. math::
+
+   \sum_{L=1}^{L_\mathrm{max}} (r / 2^L)^3
+   = r^3 \sum_{L=1}^{L_\mathrm{max}} 8^{-L}
+   < \frac{r^3}{7}
+
+so the total memory footprint is less than :math:`8/7` of the finest grid —
+roughly 15% more than the standard backend, and independent of ``nlevels``.
+In the parallel implementation each thread holds its own private copy of this
+allocation, so peak memory scales with the number of threads.
+
+When to use each backend
+^^^^^^^^^^^^^^^^^^^^^^^^^
+
+Use the standard ``"scatter"`` backend when:
+
+* All particles have similar smoothing lengths (uniform-resolution boxes).
+* You need exact per-voxel results with no upsampling approximation.
+* Memory per thread is a constraint and thread count is high.
+
+Use the ``"nested"`` backend when:
+
+* The simulation has a wide dynamic range in smoothing lengths (zoom-in runs,
+  cosmological boxes with IGM gas, multi-phase ISM models).
+* A handful of very large kernels are making ``"scatter"`` slow.
+* A few-percent approximation error in individual voxels is acceptable.
+
+Choosing ``ntarget`` and ``nlevels``
+^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^
+
+``ntarget`` controls the number of voxels each kernel spans at its assigned
+level. Higher values keep particles on finer grids (less upsampling, higher
+accuracy) at the cost of more kernel evaluations. The default of 6 is a good
+all-round choice; values in the range 4–10 span the practical speed/accuracy
+trade-off.
+
+``nlevels`` sets the depth of the hierarchy. More levels allow very large
+kernels to be placed on very coarse grids, giving larger speedups for
+extremely diffuse particles. The cost is a stricter divisibility requirement
+on ``res``. In practice ``nlevels=4`` (the default) is sufficient for all but
+the most extreme smoothing-length distributions.
+
+.. code-block:: python
+
+   # Default parameters — good starting point for most simulations.
+   grid = render_gas(
+       data,
+       resolution=512,
+       project="masses",
+       parallel=True,
+       periodic=True,
+       backend="nested",
+   )
+
+   # Higher accuracy: fewer particles pushed to coarse levels.
+   grid_accurate = render_gas(
+       data,
+       resolution=512,
+       project="masses",
+       parallel=True,
+       periodic=True,
+       backend="nested",
+       ntarget=10,
+       nlevels=4,
+   )
+
+   # Maximum speed: more levels, smaller ntarget.
+   # Requires res divisible by 2**5 = 32.
+   grid_fast = render_gas(
+       data,
+       resolution=512,
+       project="masses",
+       parallel=True,
+       periodic=True,
+       backend="nested",
+       ntarget=4,
+       nlevels=5,
+   )
+
+
 Lower-level API
 ---------------
 
@@ -391,8 +631,7 @@ This API is available through
 :obj:`swiftsimio.visualisation.volume_render_backends.backends` and
 :obj:`swiftsimio.visualisation.volume_render_backends.backends_parallel` for parallel
 implementations. The parallel versions use significantly more memory as they allocate
-a thread-local image array for each thread, summing them in the end. Here we
-will only describe the ``scatter`` variant (currently the only option).
+a thread-local image array for each thread, summing them in the end.
 
 To use this function, you will need:
 
@@ -417,11 +656,25 @@ raw numpy array (not :class:`~swiftsimio.objects.cosmo_array` or
 
 .. code-block:: python
 
-   from swiftsimio.visualisation.volume_render_backends import backends
+   from swiftsimio.visualisation.volume_render_backends import backends, backends_parallel
 
-   volume_render_scatter = backends["scatter"]
-   # Using the variable names from above
-   out = volume_render_scatter(x=x, y=y, z=z, h=h, m=m, res=res)
+   # Standard single-resolution scatter (serial).
+   out = backends["scatter"](x=x, y=y, z=z, h=h, m=m, res=res)
+
+   # Nested multi-resolution scatter (serial).
+   out = backends["nested"](
+       x=x, y=y, z=z, h=h, m=m, res=res,
+       ntarget=6,
+       nlevels=4,
+   )
+
+   # Parallel variants — use the same keyword arguments.
+   out = backends_parallel["scatter"](x=x, y=y, z=z, h=h, m=m, res=res)
+   out = backends_parallel["nested"](
+       x=x, y=y, z=z, h=h, m=m, res=res,
+       ntarget=6,
+       nlevels=4,
+   )
 
 ``out`` will be a 3D :class:`~numpy.ndarray` grid of shape ``[res, res, res]``. You will
 need to re-scale this back to your original dimensions to get it in the
