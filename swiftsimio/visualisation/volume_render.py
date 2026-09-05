@@ -22,6 +22,7 @@ from swiftsimio.visualisation._vistools import (
     backend_strip_and_restore_cosmo_and_units,
 )
 
+
 def render_voxel_grid(
     data: __SWIFTGroupDataset,
     resolution: int,

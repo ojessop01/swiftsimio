@@ -1194,9 +1194,7 @@ class TestNestedVolumeRender:
             data.gas, npix, project="masses", folding=0, parallel=False
         ).to_physical()
 
-        volume = render_gas(
-            data, npix, parallel=False, backend="nested"
-        ).to_physical()
+        volume = render_gas(data, npix, parallel=False, backend="nested").to_physical()
 
         mean_density_deposit = (
             (np.sum(deposition) / npix**3)

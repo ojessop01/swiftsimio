@@ -47,7 +47,11 @@ from numpy import float32, float64, int32, zeros, int64
 
 from numba import get_num_threads, njit, prange
 
-from swiftsimio.visualisation.slice_backends.sph import kernel, kernel_gamma, kernel_constant
+from swiftsimio.visualisation.slice_backends.sph import (
+    kernel_gamma,
+    kernel_constant,
+)
+
 
 @njit(fastmath=True, cache=True, nogil=True, boundscheck=False, error_model="numpy")
 def _assign_serial_levels(
@@ -188,7 +192,11 @@ def _deposit_particle_flat(
         px = int32(scaled_x_64)
         py = int32(scaled_y_64)
         pz = int32(scaled_z_64)
-        if 0 <= px <= maximal_index and 0 <= py <= maximal_index and 0 <= pz <= maximal_index:
+        if (
+            0 <= px <= maximal_index
+            and 0 <= py <= maximal_index
+            and 0 <= pz <= maximal_index
+        ):
             flat_cell = level_offset + (px * level_res + py) * level_res + pz
             destination[flat_cell] += mass_icv
             if level != 0:
@@ -211,21 +219,21 @@ def _deposit_particle_flat(
     # kernel compact support.  Float64 avoids the asymmetric rounding produced
     # by the previous (particle_cell ± cells_spanned) approach.
     x_start = int32(floor(scaled_x_64 - radius_cells_64 - 0.5)) + 1
-    x_stop  = int32(ceil(scaled_x_64  + radius_cells_64 - 0.5))
+    x_stop = int32(ceil(scaled_x_64 + radius_cells_64 - 0.5))
     if x_start < 0:
         x_start = 0
     if x_stop > level_res:
         x_stop = level_res
 
     y_start = int32(floor(scaled_y_64 - radius_cells_64 - 0.5)) + 1
-    y_stop  = int32(ceil(scaled_y_64  + radius_cells_64 - 0.5))
+    y_stop = int32(ceil(scaled_y_64 + radius_cells_64 - 0.5))
     if y_start < 0:
         y_start = 0
     if y_stop > level_res:
         y_stop = level_res
 
     z_start = int32(floor(scaled_z_64 - radius_cells_64 - 0.5)) + 1
-    z_stop  = int32(ceil(scaled_z_64  + radius_cells_64 - 0.5))
+    z_stop = int32(ceil(scaled_z_64 + radius_cells_64 - 0.5))
     if z_start < 0:
         z_start = 0
     if z_stop > level_res:
@@ -290,7 +298,7 @@ def _deposit_particle_flat(
             rem_x_sq = 0.0
         rem_x_64 = sqrt(rem_x_sq)
         tight_y_start = int32(floor(scaled_y_64 - rem_x_64 - 0.5)) + 1
-        tight_y_stop  = int32(ceil(scaled_y_64  + rem_x_64 - 0.5))
+        tight_y_stop = int32(ceil(scaled_y_64 + rem_x_64 - 0.5))
         if tight_y_start < y_start:
             tight_y_start = y_start
         if tight_y_stop > y_stop:
@@ -310,7 +318,7 @@ def _deposit_particle_flat(
                     rem_xy_sq = 0.0
                 rem_xy_64 = sqrt(rem_xy_sq)
                 tight_z_start = int32(floor(scaled_z_64 - rem_xy_64 - 0.5)) + 1
-                tight_z_stop  = int32(ceil(scaled_z_64  + rem_xy_64 - 0.5))
+                tight_z_stop = int32(ceil(scaled_z_64 + rem_xy_64 - 0.5))
                 if tight_z_start < z_start:
                     tight_z_start = z_start
                 if tight_z_stop > z_stop:
@@ -337,6 +345,7 @@ def _deposit_particle_flat(
                 dy += float32(1.0)
         dx_64 += 1.0
         dx += float32(1.0)
+
 
 @njit(fastmath=True, cache=True, nogil=True, boundscheck=False, error_model="numpy")
 def _scatter_particles(
@@ -631,21 +640,43 @@ def _collapse_serial_flat(
                     if right_z > coarse_max:
                         right_z = coarse_max
 
-                    xy_l_x0 = weight_y0 * coarse[base_00 + left_z]  + weight_y1 * coarse[base_01 + left_z]
-                    xy_l_x1 = weight_y0 * coarse[base_10 + left_z]  + weight_y1 * coarse[base_11 + left_z]
-                    xy_l    = weight_x0 * xy_l_x0 + weight_x1 * xy_l_x1
+                    xy_l_x0 = (
+                        weight_y0 * coarse[base_00 + left_z]
+                        + weight_y1 * coarse[base_01 + left_z]
+                    )
+                    xy_l_x1 = (
+                        weight_y0 * coarse[base_10 + left_z]
+                        + weight_y1 * coarse[base_11 + left_z]
+                    )
+                    xy_l = weight_x0 * xy_l_x0 + weight_x1 * xy_l_x1
 
-                    xy_c_x0 = weight_y0 * coarse[base_00 + coarse_z] + weight_y1 * coarse[base_01 + coarse_z]
-                    xy_c_x1 = weight_y0 * coarse[base_10 + coarse_z] + weight_y1 * coarse[base_11 + coarse_z]
-                    xy_c    = weight_x0 * xy_c_x0 + weight_x1 * xy_c_x1
+                    xy_c_x0 = (
+                        weight_y0 * coarse[base_00 + coarse_z]
+                        + weight_y1 * coarse[base_01 + coarse_z]
+                    )
+                    xy_c_x1 = (
+                        weight_y0 * coarse[base_10 + coarse_z]
+                        + weight_y1 * coarse[base_11 + coarse_z]
+                    )
+                    xy_c = weight_x0 * xy_c_x0 + weight_x1 * xy_c_x1
 
-                    xy_r_x0 = weight_y0 * coarse[base_00 + right_z] + weight_y1 * coarse[base_01 + right_z]
-                    xy_r_x1 = weight_y0 * coarse[base_10 + right_z] + weight_y1 * coarse[base_11 + right_z]
-                    xy_r    = weight_x0 * xy_r_x0 + weight_x1 * xy_r_x1
+                    xy_r_x0 = (
+                        weight_y0 * coarse[base_00 + right_z]
+                        + weight_y1 * coarse[base_01 + right_z]
+                    )
+                    xy_r_x1 = (
+                        weight_y0 * coarse[base_10 + right_z]
+                        + weight_y1 * coarse[base_11 + right_z]
+                    )
+                    xy_r = weight_x0 * xy_r_x0 + weight_x1 * xy_r_x1
 
                     fine_z = coarse_z << 1
-                    destination[output_base + fine_z]     += xy_c + float32(0.25) * (xy_l - xy_c)
-                    destination[output_base + fine_z + 1] += xy_c + float32(0.25) * (xy_r - xy_c)
+                    destination[output_base + fine_z] += xy_c + float32(0.25) * (
+                        xy_l - xy_c
+                    )
+                    destination[output_base + fine_z + 1] += xy_c + float32(0.25) * (
+                        xy_r - xy_c
+                    )
 
         # Bounds are only consumed by the next collapse. Level zero is final.
         if level > 1:
@@ -898,9 +929,11 @@ def _scatter_parallel_impl(
         )
     return output
 
+
 # ---------------------------------------------------------------------------
 # Public API
 # ---------------------------------------------------------------------------
+
 
 def _prepare(
     x: np.ndarray,
@@ -1019,6 +1052,7 @@ def _prepare(
         ntarget,
         nlevels,
     )
+
 
 def scatter(
     x: np.ndarray,
