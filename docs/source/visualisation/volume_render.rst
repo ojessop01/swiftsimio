@@ -672,6 +672,11 @@ raw numpy array (not :class:`~swiftsimio.objects.cosmo_array` or
        y=y,
        z=z,
        h=h,
+   out = backends["nested"](
+       x=x,
+       y=y,
+       z=z,
+       h=h,
        m=m,
        res=res,
        ntarget=6,
