@@ -406,7 +406,7 @@ Two scatter backends are available, selected via the ``backend`` argument to
        resolution=256,
        project="masses",
        parallel=True,
-       backend="scatter",
+       backend="scatter",  # the default
    )
 
    # Nested backend — faster for wide smoothing-length distributions.
