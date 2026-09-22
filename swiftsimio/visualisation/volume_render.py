@@ -97,12 +97,12 @@ def render_voxel_grid(
     ntarget : int, optional
         Only used with ``backend="nested"``. Target number of voxels per
         kernel compact-support diameter at each level of the nested grid
-        hierarchy. Default is 6. A ``UserWarning`` is raised if this is set
+        hierarchy. Default is ``6``. A ``UserWarning`` is raised if this is set
         without ``backend="nested"``.
 
     nlevels : int, optional
         Only used with ``backend="nested"``. Number of coarsening levels in
-        the nested grid hierarchy. Default is 4. ``resolution`` must be
+        the nested grid hierarchy. Default is ``4``. ``resolution`` must be
         divisible by ``2**nlevels``. A ``UserWarning`` is raised if this is
         set without ``backend="nested"``.
 
@@ -252,12 +252,12 @@ def render_gas(
     ntarget : int, optional
         Only used with ``backend="nested"``. Target number of voxels per
         kernel compact-support diameter at each level of the nested grid
-        hierarchy. Default is 6. A ``UserWarning`` is raised if this is set
+        hierarchy. Default is ``6``. A ``UserWarning`` is raised if this is set
         without ``backend="nested"``.
 
     nlevels : int, optional
         Only used with ``backend="nested"``. Number of coarsening levels in
-        the nested grid hierarchy. Default is 4. ``resolution`` must be
+        the nested grid hierarchy. Default is ``4``. ``resolution`` must be
         divisible by ``2**nlevels``. A ``UserWarning`` is raised if this is
         set without ``backend="nested"``.
 

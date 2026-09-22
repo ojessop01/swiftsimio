@@ -440,7 +440,11 @@ The nested backend bounds the per-particle cost at
 :math:`\mathcal{O}(n_\mathrm{target}^3)` regardless of smoothing length by
 scattering large particles onto a coarser grid and trilinearly upsampling
 the result back to the finest grid afterwards. This follows the Sparse
-Multi-Scale Grid approach described in Benitez-Llambay (2025).
+Multi-Scale Grid approach described in `Benítez-Llambay (2025)`_.
+The same algorithm is also available for 2D projections as
+``backend="nested"`` (see :doc:`projection`).
+
+.. _Benítez-Llambay (2025): https://iopscience.iop.org/article/10.3847/2515-5172/addab2
 
 Algorithm
 ^^^^^^^^^
@@ -495,8 +499,8 @@ finer grid. The upsampling stencil is::
 
 applied independently in each of x, y, z, giving a separable
 trilinear interpolation. Only the bounding box of voxels that actually
-received mass is upsampled at each level, so the collapse cost scales with
-the number of particles rather than the grid volume.
+received mass is upsampled at each level, so the collapse cost scales
+approximately with the number of particles rather than the grid volume.
 
 **4. Return.**
 The finest grid, which now contains contributions from all levels, is
@@ -521,8 +525,9 @@ in those cells (which individually carry very little mass). If per-voxel
 fidelity at the sub-percent level matters, either increase ``ntarget`` or use
 the standard ``"scatter"`` backend.
 
-For integrated quantities — total mass, flux, or projected density — both
-backends are mass-conserving to floating-point precision.
+Neither backend renormalises its kernels, so integrated quantities such as
+the total mass are conserved to about the same (percent-level) accuracy in
+both.
 
 Resolution constraint
 ^^^^^^^^^^^^^^^^^^^^^
@@ -663,7 +668,12 @@ raw numpy array (not :class:`~swiftsimio.objects.cosmo_array` or
 
    # Nested multi-resolution scatter (serial).
    out = backends["nested"](
-       x=x, y=y, z=z, h=h, m=m, res=res,
+       x=x,
+       y=y,
+       z=z,
+       h=h,
+       m=m,
+       res=res,
        ntarget=6,
        nlevels=4,
    )
@@ -671,7 +681,12 @@ raw numpy array (not :class:`~swiftsimio.objects.cosmo_array` or
    # Parallel variants — use the same keyword arguments.
    out = backends_parallel["scatter"](x=x, y=y, z=z, h=h, m=m, res=res)
    out = backends_parallel["nested"](
-       x=x, y=y, z=z, h=h, m=m, res=res,
+       x=x,
+       y=y,
+       z=z,
+       h=h,
+       m=m,
+       res=res,
        ntarget=6,
        nlevels=4,
    )

@@ -1,5 +1,7 @@
 """Calls functions from `projection_backends`."""
 
+from warnings import warn
+
 import numpy as np
 from swiftsimio import SWIFTDataset, cosmo_array
 
@@ -25,6 +27,8 @@ def project_pixel_grid(
     parallel: bool = False,
     backend: str = "fast",
     periodic: bool = True,
+    ntarget: int | None = None,
+    nlevels: int | None = None,
 ) -> cosmo_array:
     r"""
     Create a 2D projection of a particle-carried field onto a 2D grid.
@@ -84,6 +88,18 @@ def project_pixel_grid(
         Account for periodic boundary conditions for the simulation box?
         Defaults to ``True``.
 
+    ntarget : int, optional
+        Only used with ``backend="nested"``. Target number of pixels per
+        kernel compact-support diameter at each level of the nested grid
+        hierarchy. Default is ``6``. A ``UserWarning`` is raised if this is set
+        without ``backend="nested"``.
+
+    nlevels : int, optional
+        Only used with ``backend="nested"``. Number of coarsening levels in
+        the nested grid hierarchy. Default is ``4``. ``resolution`` must be
+        divisible by ``2**nlevels``. A ``UserWarning`` is raised if this is
+        set without ``backend="nested"``.
+
     Returns
     -------
     cosmo_array
@@ -100,6 +116,13 @@ def project_pixel_grid(
       array if you want it to be visualised the 'right way up'. Also use
       `origin="lower"` with `imshow`.
     """
+    if backend != "nested" and (ntarget is not None or nlevels is not None):
+        warn(
+            "ntarget and nlevels are only used with backend='nested'. "
+            "These parameters will be ignored.",
+            UserWarning,
+        )
+
     m = _get_projection_field(data, project)
     region_info = _get_region_info(data, region, periodic=periodic)
     hsml = backends_get_hsml["sph" if backend != "histogram" else "histogram"](data)
@@ -146,6 +169,9 @@ def project_pixel_grid(
         box_x=region_info["periodic_box_x"],
         box_y=region_info["periodic_box_y"],
     )
+    if backend == "nested":
+        kwargs["ntarget"] = 6 if ntarget is None else int(ntarget)
+        kwargs["nlevels"] = 4 if nlevels is None else int(nlevels)
     norm = region_info["x_range"] * region_info["y_range"]
     backend_func = (backends_parallel if parallel else backends)[backend]
     image = backend_strip_and_restore_cosmo_and_units(backend_func, norm=norm)(**kwargs)
@@ -173,6 +199,8 @@ def project_gas(
     parallel: bool = False,
     backend: str = "fast",
     periodic: bool = True,
+    ntarget: int | None = None,
+    nlevels: int | None = None,
 ) -> cosmo_array:
     r"""
     Create a 2D projection of a gas particle-carried field onto a 2D grid.
@@ -232,6 +260,18 @@ def project_gas(
         Account for periodic boundary conditions for the simulation box?
         Defaults to ``True``.
 
+    ntarget : int, optional
+        Only used with ``backend="nested"``. Target number of pixels per
+        kernel compact-support diameter at each level of the nested grid
+        hierarchy. Default is ``6``. A ``UserWarning`` is raised if this is set
+        without ``backend="nested"``.
+
+    nlevels : int, optional
+        Only used with ``backend="nested"``. Number of coarsening levels in
+        the nested grid hierarchy. Default is ``4``. ``resolution`` must be
+        divisible by ``2**nlevels``. A ``UserWarning`` is raised if this is
+        set without ``backend="nested"``.
+
     Returns
     -------
     cosmo_array
@@ -259,4 +299,6 @@ def project_gas(
         rotation_center=rotation_center,
         backend=backend,
         periodic=periodic,
+        ntarget=ntarget,
+        nlevels=nlevels,
     )
