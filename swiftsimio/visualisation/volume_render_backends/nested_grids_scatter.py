@@ -1194,7 +1194,7 @@ def scatter_parallel(
 
     ntarget : int
         Target number of voxels spanned by each kernel at its assigned level.
-        Controls the accuracy/speed trade-off. Default is 6.
+        Controls the accuracy/speed trade-off. Default is ``6``.
 
     nlevels : int
         Maximum number of coarsening levels in the hierarchy. Default is 4.
