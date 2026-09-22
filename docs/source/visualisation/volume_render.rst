@@ -400,7 +400,7 @@ Two scatter backends are available, selected via the ``backend`` argument to
 
    data = load("cosmo_volume_example.hdf5")
 
-   # Standard backend — identical results, familiar behaviour.
+   # Standard backend
    mass_grid_standard = render_gas(
        data,
        resolution=256,
