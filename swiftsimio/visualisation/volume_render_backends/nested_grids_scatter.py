@@ -1111,7 +1111,7 @@ def scatter(
         Controls the accuracy/speed trade-off. Default is 6.
 
     nlevels : int
-        Maximum number of coarsening levels in the hierarchy. Default is 4.
+        Maximum number of coarsening levels in the hierarchy. Default is ``4``.
 
     Returns
     -------
