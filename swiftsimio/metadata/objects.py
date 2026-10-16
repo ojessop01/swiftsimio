@@ -15,7 +15,7 @@ from unyt.array import _iterable
 from swiftsimio.conversions import swift_cosmology_to_astropy
 from swiftsimio import metadata
 from swiftsimio.objects import cosmo_array, cosmo_factor, cosmo_quantity
-from swiftsimio._handle_provider import HandleProvider
+from swiftsimio._handle_provider import HandleProvider, open_hdf5
 from abc import ABC, abstractmethod
 
 import re
@@ -145,6 +145,23 @@ class SWIFTMetadata(HandleProvider, ABC):
                 setattr(self, name, dict(self.handle[field].attrs))
             except KeyError:
                 setattr(self, name, None)
+
+        return
+
+    def get_named_column_metadata(self) -> None:
+        """
+        Load the custom named column metadata from SubgridScheme/NamedColumns.
+
+        If name column didn't exist just set an empty :obj:`dict` instead.
+        """
+        try:
+            data = self.handle["SubgridScheme/NamedColumns"]
+
+            self.named_columns = {
+                k: [x.decode("utf-8") for x in data[k][:]] for k in data.keys()
+            }
+        except KeyError:
+            self.named_columns = {}
 
         return
 
@@ -848,7 +865,7 @@ def _metadata_discriminator(
     """
     # Old snapshots did not have OutputType, so we need to default to FullVolume
     if handle is None:
-        with h5py.File(filename, "r") as local_handle:
+        with open_hdf5(filename) as local_handle:
             file_type = local_handle["Header"].attrs.get("OutputType", "FullVolume")
     else:
         file_type = handle["Header"].attrs.get("OutputType", "FullVolume")
@@ -905,23 +922,6 @@ class SWIFTSnapshotMetadata(SWIFTMetadata):
         self.extract_cosmology()
 
         self._close_handle_if_manager()
-
-        return
-
-    def get_named_column_metadata(self) -> None:
-        """
-        Load the custom named column metadata from SubgridScheme/NamedColumns.
-
-        If name column didn't exist just set an empty :obj:`dict` instead.
-        """
-        try:
-            data = self.handle["SubgridScheme/NamedColumns"]
-
-            self.named_columns = {
-                k: [x.decode("utf-8") for x in data[k][:]] for k in data.keys()
-            }
-        except KeyError:
-            self.named_columns = {}
 
         return
 
@@ -1385,7 +1385,7 @@ class SWIFTLineOfSightMetadata(SWIFTSnapshotMetadata):
         if self._handle:
             keys = self.handle.keys()
         else:
-            with h5py.File(self.filename, "r") as handle:
+            with open_hdf5(self.filename) as handle:
                 keys = list(handle.keys())
 
         return sorted([group for group in keys if group.startswith("LOS_")])
@@ -1590,6 +1590,7 @@ class SWIFTSOAPMetadata(SWIFTMetadata):
     ) -> None:
         super().__init__(filename, units=units, handle=handle)
         self.get_metadata()
+        self.get_named_column_metadata()
         self.postprocess_header()
         self.unpack_subhalo_number()
 
