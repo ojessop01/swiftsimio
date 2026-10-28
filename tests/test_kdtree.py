@@ -4,7 +4,6 @@ import numba
 import numpy as np
 import pytest
 from swiftsimio.visualisation.kdtree import (
-    HEAP_K,
     k_nearest_distances,
     nearest_particles,
 )
@@ -72,11 +71,10 @@ def _scipy_distances(
 
 @pytest.mark.parametrize("boxsize", [10.0, None])
 @pytest.mark.parametrize("k", [1, 2, 7, 40, 150])
-@pytest.mark.parametrize("heap_k", [0, HEAP_K])
-def test_k_nearest_distances_match_scipy(boxsize, k, heap_k):
-    """Check the k-d tree distances against scipy, by heap and by shells."""
+def test_k_nearest_distances_match_scipy(boxsize, k):
+    """Check the k-d tree distances against scipy."""
     positions = _clumpy_particles(6000, 10.0)
-    distances = k_nearest_distances(positions, k, boxsize, heap_k=heap_k)
+    distances = k_nearest_distances(positions, k, boxsize)
     np.testing.assert_allclose(
         distances,
         _scipy_distances(positions, k, boxsize),
@@ -92,13 +90,12 @@ def test_k_nearest_distances_duplicates(boxsize):
     clumps = np.repeat(rng.random((50, 3)) * 10.0, rng.integers(1, 40, 50), axis=0)
     positions = np.concatenate([clumps, rng.random((2000, 3)) * 10.0])
     for k in (5, 20, 120):
-        for heap_k in (0, HEAP_K):
-            np.testing.assert_allclose(
-                k_nearest_distances(positions, k, boxsize, heap_k=heap_k),
-                _scipy_distances(positions, k, boxsize),
-                rtol=1e-12,
-                atol=DISTANCE_ATOL * 10.0,
-            )
+        np.testing.assert_allclose(
+            k_nearest_distances(positions, k, boxsize),
+            _scipy_distances(positions, k, boxsize),
+            rtol=1e-12,
+            atol=DISTANCE_ATOL * 10.0,
+        )
 
 
 def test_k_nearest_distances_mixed_periodicity():
