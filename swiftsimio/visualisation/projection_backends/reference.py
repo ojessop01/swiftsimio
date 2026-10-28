@@ -12,13 +12,9 @@ from swiftsimio.accelerated import jit, NUM_THREADS, prange
 from swiftsimio.visualisation.projection_backends.kernels import (
     kernel_double_precision as kernel,
 )
-from swiftsimio.visualisation.projection_backends.kernels import (
-    kernel_constant,
-    kernel_gamma,
-)
+from swiftsimio.visualisation.projection_backends.kernels import kernel_gammas
 
-kernel_constant = np.float64(kernel_constant)
-kernel_gamma = np.float64(kernel_gamma)
+kernel_gammas = kernel_gammas.astype(np.float64)
 
 
 @jit(nopython=True, fastmath=True)
@@ -30,6 +26,7 @@ def scatter(
     res: int,
     box_x: np.float64 = 0.0,
     box_y: np.float64 = 0.0,
+    kernel_id: int = 0,
 ) -> np.ndarray:
     """
     Create a weighted scatter plot.
@@ -64,6 +61,11 @@ def scatter(
         Box size in y, in the same rescaled length units as x and y. Used
         for periodic wrapping.
 
+    kernel_id : int
+        Index of the SPH kernel to use, see
+        :data:`swiftsimio.visualisation.kernels.kernel_names`. Defaults to
+        ``0`` (Wendland-C2).
+
     Returns
     -------
     np.ndarray[np.float32, np.float32, np.float32]
@@ -80,6 +82,8 @@ def scatter(
     improvement. In our testing, using numpy floats and integers is also an improvement
     over using the numba ones.
     """
+    kernel_gamma = kernel_gammas[kernel_id]
+
     # Output array for our image
     image = np.zeros((res, res), dtype=np.float64)
     maximal_array_index = np.int32(res) - 1
@@ -167,7 +171,7 @@ def scatter(
 
                             r = np.sqrt(distance_x_2 + distance_y_2)
 
-                            kernel_eval = kernel(r, kernel_width)
+                            kernel_eval = kernel(r, kernel_width, kernel_id)
 
                             image[cell_x, cell_y] += mass * kernel_eval
 
@@ -183,6 +187,7 @@ def scatter_parallel(
     res: int,
     box_x: np.float64 = 0.0,
     box_y: np.float64 = 0.0,
+    kernel_id: int = 0,
 ) -> np.ndarray:
     """
     Create a weighted scatter plot in parallel.
@@ -216,6 +221,11 @@ def scatter_parallel(
     box_y : np.float64
         Box size in y, in the same rescaled length units as x and y. Used
         for periodic wrapping.
+
+    kernel_id : int
+        Index of the SPH kernel to use, see
+        :data:`swiftsimio.visualisation.kernels.kernel_names`. Defaults to
+        ``0`` (Wendland-C2).
 
     Returns
     -------
@@ -258,6 +268,7 @@ def scatter_parallel(
             res=res,
             box_x=box_x,
             box_y=box_y,
+            kernel_id=kernel_id,
         )
 
     return output

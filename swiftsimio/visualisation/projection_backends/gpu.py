@@ -1,5 +1,7 @@
 """Kernel evaluation on the GPU."""
 
+import math
+
 import numpy as np
 from swiftsimio.optional_packages import (
     CUDA_AVAILABLE,
@@ -7,16 +9,29 @@ from swiftsimio.optional_packages import (
     CudaSupportError,
     cuda,
 )
+from swiftsimio.visualisation.kernels import (
+    get_kernel_id,
+    kernel_shape,
+    kernel_gamma_2d,
+    kernel_constant_2d,
+)
 
+# Taken from Dehnen & Aly 2012; this is the Wendland-C2 (default) value.
 kernel_gamma = np.float32(1.897367)
 
+# Support radii and 2D normalisations of each kernel, indexed by kernel_id.
+kernel_gammas = kernel_gamma_2d.astype(np.float32)
+kernel_constants = kernel_constant_2d.astype(np.float32)
 
-@cuda_jit("np.float32(np.float32, np.float32)", device=True)
-def kernel(r: np.float32, H: np.float32) -> np.float32:
+
+@cuda_jit("float32(float32, float32, int64)", device=True)
+def kernel(r: np.float32, H: np.float32, kernel_id: int) -> np.float32:
     """
     Single precision kernel implementation for swiftsimio.
 
-    This is the Wendland-C2 kernel as shown in Denhen & Aly (2012) [1]_.
+    This is the 2D form of the kernel selected by ``kernel_id`` (see
+    :mod:`swiftsimio.visualisation.kernels`); the default is the Wendland-C2
+    kernel as shown in Denhen & Aly (2012) [1]_.
 
     Parameters
     ----------
@@ -25,6 +40,9 @@ def kernel(r: np.float32, H: np.float32) -> np.float32:
 
     H : np.float32
         Kernel width (i.e. radius of compact support for the kernel).
+
+    kernel_id : int
+        Index of the kernel in :data:`swiftsimio.visualisation.kernels.kernel_names`.
 
     Returns
     -------
@@ -40,7 +58,7 @@ def kernel(r: np.float32, H: np.float32) -> np.float32:
     ----------
     .. [1] Dehnen W., Aly H., 2012, MNRAS, 425, 1068
     """
-    kernel_constant = np.float32(2.22817109)
+    kernel_constant = kernel_constants[kernel_id]
 
     inverse_H = 1.0 / H
     ratio = r * inverse_H
@@ -48,11 +66,7 @@ def kernel(r: np.float32, H: np.float32) -> np.float32:
     kernel = 0.0
 
     if ratio < 1.0:
-        one_minus_ratio = 1.0 - ratio
-        one_minus_ratio_2 = one_minus_ratio * one_minus_ratio
-        one_minus_ratio_4 = one_minus_ratio_2 * one_minus_ratio_2
-
-        kernel = max(one_minus_ratio_4 * (1.0 + 4.0 * ratio), 0.0)
+        kernel = kernel_shape(ratio, kernel_id)
 
         kernel *= kernel_constant * inverse_H * inverse_H
 
@@ -60,8 +74,8 @@ def kernel(r: np.float32, H: np.float32) -> np.float32:
 
 
 @cuda_jit(
-    "void(np.float64[:], np.float64[:], np.float32[:], np.float32[:], np.float64, "
-    "np.float64, np.float32[:,:])"
+    "void(float64[:], float64[:], float32[:], float32[:], float64, float64, "
+    "float32[:,:], int64)"
 )
 def scatter_gpu(
     x: np.float64,
@@ -71,6 +85,7 @@ def scatter_gpu(
     box_x: np.float64,
     box_y: np.float64,
     img: np.float32,
+    kernel_id: int,
 ) -> None:
     """
     Create a weighted scatter plot.
@@ -102,6 +117,10 @@ def scatter_gpu(
 
     img : np.ndarray[np.float32]
         The output image.
+
+    kernel_id : int
+        Index of the SPH kernel to use, see
+        :data:`swiftsimio.visualisation.kernels.kernel_names`.
 
     Notes
     -----
@@ -136,11 +155,11 @@ def scatter_gpu(
 
         # Calculate the cell that this particle; use the 64 bit version of the
         # resolution as this is the same type as the positions
-        particle_cell_x = np.int32(np.floor(float_res_64 * x_pos))
-        particle_cell_y = np.int32(np.floor(float_res_64 * y_pos))
+        particle_cell_x = np.int32(math.floor(float_res_64 * x_pos))
+        particle_cell_y = np.int32(math.floor(float_res_64 * y_pos))
 
         # SWIFT stores hsml as the FWHM.
-        kernel_width = kernel_gamma * hsml
+        kernel_width = kernel_gammas[kernel_id] * hsml
 
         # The number of cells that this kernel spans
         cells_spanned = np.int32(1.0 + kernel_width * float_res)
@@ -188,9 +207,9 @@ def scatter_gpu(
                     distance_y -= np.float32(y_pos)
                     distance_y_2 = distance_y * distance_y
 
-                    r = np.sqrt(distance_x_2 + distance_y_2)
+                    r = math.sqrt(distance_x_2 + distance_y_2)
 
-                    kernel_eval = kernel(r, kernel_width)
+                    kernel_eval = kernel(r, kernel_width, kernel_id)
 
                     cuda.atomic.add(img, (cell_x, cell_y), mass * kernel_eval)
 
@@ -203,6 +222,7 @@ def scatter(
     res: int,
     box_x: np.float64 = 0.0,
     box_y: np.float64 = 0.0,
+    kernel_id: int = 0,
 ) -> np.ndarray:
     """
     Create a weighted scatter plot in parallel.
@@ -237,6 +257,11 @@ def scatter(
         Box size in y, in the same rescaled length units as x and y. Used
         for periodic wrapping.
 
+    kernel_id : int
+        Index of the SPH kernel to use, see
+        :data:`swiftsimio.visualisation.kernels.kernel_names`. Defaults to
+        ``0`` (Wendland-C2).
+
     Returns
     -------
     np.ndarray[np.float32, np.float32, np.float32]
@@ -257,6 +282,14 @@ def scatter(
             "is only available on systems with supported GPUs."
         )
 
+    # The GPU kernel is compiled for these exact types and needs contiguous arrays.
+    x = np.ascontiguousarray(x, dtype=np.float64)
+    y = np.ascontiguousarray(y, dtype=np.float64)
+    m = np.ascontiguousarray(m, dtype=np.float32)
+    h = np.ascontiguousarray(h, dtype=np.float32)
+    box_x = float(box_x)
+    box_y = float(box_y)
+
     output = cuda.device_array((res, res), dtype=np.float32)
     output[:] = 0
 
@@ -275,11 +308,13 @@ def scatter(
     # copies for each particle
     threads_per_block = (16, 1, 1)
     blocks_per_grid = (
-        np.ceil(n_part / threads_per_block[0]),
+        int(np.ceil(n_part / threads_per_block[0])),
         n_xshift // threads_per_block[1],
         n_yshift // threads_per_block[2],
     )
-    scatter_gpu[blocks_per_grid, threads_per_block](x, y, m, h, box_x, box_y, output)
+    scatter_gpu[blocks_per_grid, threads_per_block](
+        x, y, m, h, box_x, box_y, output, get_kernel_id(kernel_id)
+    )
 
     return output.copy_to_host()
 
