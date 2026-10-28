@@ -76,7 +76,7 @@ Python packages
 Optional packages
 ^^^^^^^^^^^^^^^^^
 
-+ ``scipy``, required for the ``nearest_neighbours`` slice backend.
++ ``scipy``, required for power spectra (``swiftsimio.visualisation.power_spectrum``).
 + ``tqdm``, required for progress bars for some long-running tasks. If not installed
   no progress bar will be shown.
 

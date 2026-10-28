@@ -6,7 +6,7 @@ import pytest
 import unyt as u
 from swiftsimio import load, cosmo_array
 from swiftsimio.visualisation.smoothing_length import generate_smoothing_lengths
-from swiftsimio.visualisation.smoothing_length._kdtree import (
+from swiftsimio.visualisation._kdtree import (
     HEAP_K,
     k_nearest_distances,
 )

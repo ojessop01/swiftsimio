@@ -2,68 +2,9 @@
 
 import numpy as np
 
-from swiftsimio.optional_packages import KDTree, TREE_AVAILABLE
+from numba import config, get_num_threads, set_num_threads
 
-
-def build_tree(
-    x: np.float64,
-    y: np.float64,
-    z: np.float64,
-    box_x: float,
-    box_y: float,
-    box_z: float,
-) -> KDTree:
-    """
-    Build the tree used for the nearest-neighbour calculations.
-
-    In the periodic case, we must make sure that all particle coordinates
-    fall inside the box.
-
-    Parameters
-    ----------
-    x : array of float64
-        The x-positions of the particles. Must be bounded by [0, 1].
-
-    y : array of float64
-        The y-positions of the particles. Must be bounded by [0, 1].
-
-    z : array of float64
-        The z-positions of the particles. Must be bounded by [0, 1].
-
-    box_x : float
-        Box size in x, in the same rescaled length units as x, y and z.
-        Used for periodic wrapping (if not 0).
-
-    box_y : float
-        Box size in y, in the same rescaled length units as x, y and z.
-        Used for periodic wrapping (if not 0).
-
-    box_z : float
-        Box size in z, in the same rescaled length units as x, y and z.
-        Used for periodic wrapping (if not 0).
-
-    Returns
-    -------
-    KDTree
-        A KD-tree built from the particle positions.
-    """
-    if not TREE_AVAILABLE:
-        raise ImportError(
-            "The scipy.spatial.cKDTree class is required to use the "
-            "'nearest_neighbours' slice backend."
-        )
-    if box_x != 0 or box_y != 0 or box_z != 0:
-        if box_x != 0:
-            x %= box_x
-        if box_y != 0:
-            y %= box_y
-        if box_z != 0:
-            z %= box_z
-        data = np.stack((x, y, z), axis=1)
-        return KDTree(data, boxsize=[box_x, box_y, box_z])
-    else:
-        data = np.stack((x, y, z), axis=1)
-        return KDTree(data)
+from swiftsimio.visualisation._kdtree import nearest_particles
 
 
 def slice_scatter(
@@ -125,8 +66,8 @@ def slice_scatter(
         Used for periodic wrapping (if not 0).
 
     workers : int
-        The number of workers to use for the nearest-neighbour calculations.
-        Set to -1 to use all available cpus.
+        The number of threads to use for the nearest-neighbour calculations.
+        Set to -1 to use all of ``numba``'s threads.
 
     Returns
     -------
@@ -158,10 +99,22 @@ def slice_scatter(
         axis=1,
     )
 
-    tree = build_tree(x, y, z, box_x, box_y, box_z)
-    _, i = tree.query(pixel_coordinates, workers=workers)
-
     values = m / h**3
+    if values.size == 0:
+        return np.zeros((xres, yres), dtype=values.dtype)
+
+    # In the periodic case the particles and pixels are wrapped into the box (a
+    # box size of 0 leaves that axis non-periodic)
+    threads = get_num_threads()
+    try:
+        if workers > 0:
+            set_num_threads(min(workers, config.NUMBA_NUM_THREADS))
+        i = nearest_particles(
+            np.stack((x, y, z), axis=1), pixel_coordinates, [box_x, box_y, box_z]
+        )
+    finally:
+        set_num_threads(threads)
+
     return values[i].reshape(xres, yres)
 
 

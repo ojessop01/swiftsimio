@@ -1,7 +1,10 @@
 """
-Distance to the k-th nearest neighbour of every particle with a parallel k-d tree.
+Nearest-neighbour searches with a parallel k-d tree.
 
-The distances are exact: the same as those of ``scipy.spatial.cKDTree.query``.
+Two searches, both exact (the same as ``scipy.spatial.cKDTree.query``):
+:func:`k_nearest_distances` finds the distance from every particle to its k-th
+nearest neighbour (for smoothing lengths), and :func:`nearest_particles` the
+particle nearest to each of a set of points (for nearest-neighbour images).
 
 Notes
 -----
@@ -20,6 +23,10 @@ distance moved, ``|d_k(q) - d_k(a)| <= |q - a|``, so
 ``max(d_k(a) - |q - a|) <= d_k(q) <= min(d_k(a) + |q - a|)``. The k-th
 distance of the nearest solved particle is also a guess at ``d_k(q)``. The
 first particle of a group is found from scratch.
+
+For :func:`nearest_particles` the query points go in chunks of consecutive
+points (as the pixels along a row of an image), and each search starts from the
+particle nearest to the point before, whose distance bounds the nearest.
 
 Up to ``k = HEAP_K`` the k-th distance is found with a max-heap of the ``k``
 nearest squared distances, searching only below the upper bound. Above it the
@@ -54,6 +61,9 @@ EXACT_GUESS = 0.12
 # Leaves queried one after another by a thread (a power of 2): the first
 # particle of each is bounded from the previous leaf's
 LEAF_GROUP = 8
+# Consecutive query points searched one after another by a thread (each from
+# the nearest particle to the point before it) for nearest_particles
+QUERY_CHUNK = 256
 # The period of an axis that is not periodic: huge but finite, so that the
 # minimum-image fold min(|dx|, period - |dx|) is |dx| (see _separation)
 FREE_AXIS = 1e300
@@ -1506,6 +1516,225 @@ def _query_all(
     return out
 
 
+@njit(cache=True, fastmath=FASTMATH)
+def _nearest_query(
+    qx: float,
+    qy: float,
+    qz: float,
+    lo: NDArray[np.int64],
+    hi: NDArray[np.int64],
+    bmin: NDArray[np.float64],
+    bmax: NDArray[np.float64],
+    period: NDArray[np.float64],
+    xs: NDArray[np.float64],
+    ys: NDArray[np.float64],
+    zs: NDArray[np.float64],
+    first_leaf: int,
+    best2: float,
+    best: int,
+    stack: NDArray[np.int64],
+    stack_d2: NDArray[np.float64],
+    d2: NDArray[np.float64],
+) -> int:
+    """
+    Find the particle nearest to a point.
+
+    The nearer child of a node is searched first, and nodes no nearer than the
+    nearest particle so far are skipped. The search starts from a particle
+    already known (the nearest to the previous point), whose distance bounds
+    that of the nearest.
+
+    Parameters
+    ----------
+    qx : float
+        The point's x coordinate.
+    qy : float
+        The point's y coordinate.
+    qz : float
+        The point's z coordinate.
+    lo : NDArray[np.int64]
+        First particle of each node.
+    hi : NDArray[np.int64]
+        One past the last particle of each node.
+    bmin : NDArray[np.float64]
+        Lower corners of the nodes' boxes.
+    bmax : NDArray[np.float64]
+        Upper corners of the nodes' boxes.
+    period : NDArray[np.float64]
+        Period of each axis.
+    xs : NDArray[np.float64]
+        Particle x coordinates in tree order.
+    ys : NDArray[np.float64]
+        Particle y coordinates in tree order.
+    zs : NDArray[np.float64]
+        Particle z coordinates in tree order.
+    first_leaf : int
+        Index of the first leaf node.
+    best2 : float
+        Squared distance to the particle ``best`` (``inf`` if none).
+    best : int
+        A particle (in tree order) to start from (-1 if none).
+    stack : NDArray[np.int64]
+        Workspace for the nodes to visit.
+    stack_d2 : NDArray[np.float64]
+        Workspace for the squared distances to the nodes to visit.
+    d2 : NDArray[np.float64]
+        Workspace of ``LEAF_SIZE`` elements.
+
+    Returns
+    -------
+    int
+        The nearest particle, in tree order.
+    """
+    stack[0] = 0
+    stack_d2[0] = 0.0
+    top = 1
+    while top > 0:
+        top -= 1
+        node = stack[top]
+        if stack_d2[top] >= best2:
+            continue
+        if node >= first_leaf:
+            start = lo[node]
+            n = hi[node] - start
+            # Vectorised: all the leaf's squared distances, then their minimum
+            nearest = np.inf
+            for j in range(n):
+                dx = _separation(xs[start + j] - qx, period, 0)
+                dy = _separation(ys[start + j] - qy, period, 1)
+                dz = _separation(zs[start + j] - qz, period, 2)
+                d2[j] = dx * dx + dy * dy + dz * dz
+                nearest = min(nearest, d2[j])
+            if nearest < best2:
+                for j in range(n):
+                    if d2[j] == nearest:
+                        best = start + j
+                        break
+                best2 = nearest
+            continue
+        left = 2 * node + 1
+        right = left + 1
+        d_left = _box_min_distance2(bmin, bmax, left, qx, qy, qz, period)
+        d_right = _box_min_distance2(bmin, bmax, right, qx, qy, qz, period)
+        # Nearer child on top, so it is searched first
+        if d_left <= d_right:
+            near, d_near, far, d_far = left, d_left, right, d_right
+        else:
+            near, d_near, far, d_far = right, d_right, left, d_left
+        if d_far < best2:
+            stack[top] = far
+            stack_d2[top] = d_far
+            top += 1
+        if d_near < best2:
+            stack[top] = near
+            stack_d2[top] = d_near
+            top += 1
+    return best
+
+
+@njit(cache=True, parallel=True)
+def _nearest_all(
+    query_x: NDArray[np.float64],
+    query_y: NDArray[np.float64],
+    query_z: NDArray[np.float64],
+    n_workers: int,
+    perm: NDArray[np.int64],
+    lo: NDArray[np.int64],
+    hi: NDArray[np.int64],
+    bmin: NDArray[np.float64],
+    bmax: NDArray[np.float64],
+    period: NDArray[np.float64],
+    xs: NDArray[np.float64],
+    ys: NDArray[np.float64],
+    zs: NDArray[np.float64],
+    depth: int,
+) -> NDArray[np.int64]:
+    """
+    Find the particle nearest to each query point, in parallel.
+
+    The points go in chunks of ``QUERY_CHUNK`` consecutive points interleaved
+    between the threads; each point starts its search from the nearest particle
+    to the one before it in its chunk.
+
+    Parameters
+    ----------
+    query_x : NDArray[np.float64]
+        The query points' x coordinates.
+    query_y : NDArray[np.float64]
+        The query points' y coordinates.
+    query_z : NDArray[np.float64]
+        The query points' z coordinates.
+    n_workers : int
+        Number of workers.
+    perm : NDArray[np.int64]
+        Particle indices in tree order.
+    lo : NDArray[np.int64]
+        First particle of each node.
+    hi : NDArray[np.int64]
+        One past the last particle of each node.
+    bmin : NDArray[np.float64]
+        Lower corners of the nodes' boxes.
+    bmax : NDArray[np.float64]
+        Upper corners of the nodes' boxes.
+    period : NDArray[np.float64]
+        Period of each axis.
+    xs : NDArray[np.float64]
+        Particle x coordinates in tree order.
+    ys : NDArray[np.float64]
+        Particle y coordinates in tree order.
+    zs : NDArray[np.float64]
+        Particle z coordinates in tree order.
+    depth : int
+        Depth of the tree.
+
+    Returns
+    -------
+    NDArray[np.int64]
+        The index of the nearest particle to each query point.
+    """
+    m = query_x.size
+    out = np.empty(m, dtype=np.int64)
+    first_leaf = (1 << depth) - 1
+    n_chunks = (m + QUERY_CHUNK - 1) // QUERY_CHUNK
+    for w in prange(n_workers):
+        stack = np.empty(2 * depth + 4, dtype=np.int64)
+        stack_d2 = np.empty(2 * depth + 4, dtype=xs.dtype)
+        d2 = np.empty(LEAF_SIZE, dtype=xs.dtype)
+        for chunk in range(w, n_chunks, n_workers):
+            best = -1
+            for i in range(chunk * QUERY_CHUNK, min(m, (chunk + 1) * QUERY_CHUNK)):
+                qx = query_x[i]
+                qy = query_y[i]
+                qz = query_z[i]
+                best2 = np.inf
+                if best >= 0:
+                    dx = _separation(xs[best] - qx, period, 0)
+                    dy = _separation(ys[best] - qy, period, 1)
+                    dz = _separation(zs[best] - qz, period, 2)
+                    best2 = dx * dx + dy * dy + dz * dz
+                best = _nearest_query(
+                    qx,
+                    qy,
+                    qz,
+                    lo,
+                    hi,
+                    bmin,
+                    bmax,
+                    period,
+                    xs,
+                    ys,
+                    zs,
+                    first_leaf,
+                    best2,
+                    best,
+                    stack,
+                    stack_d2,
+                    d2,
+                )
+                out[i] = perm[best]
+    return out
+
+
 def _periodic_cut(x: NDArray[np.float64], period: float, bins: int = 4096) -> float:
     """
     Choose where to put the boundary of a periodic axis.
@@ -1542,6 +1771,97 @@ def _periodic_cut(x: NDArray[np.float64], period: float, bins: int = 4096) -> fl
     widest = int(np.argmax(run_ends - run_starts))
     middle = 0.5 * (run_starts[widest] + run_ends[widest]) + start
     return (middle % bins) * (period / bins)
+
+
+@njit(cache=True, parallel=True)
+def _shift_axis(
+    x: NDArray[np.float64], offset: float, period: float, out: NDArray[np.float64]
+) -> None:
+    """
+    Shift coordinates along an axis, and wrap them into ``[0, period)``.
+
+    Parameters
+    ----------
+    x : NDArray[np.float64]
+        The coordinates.
+    offset : float
+        Subtracted from the coordinates.
+    period : float
+        Period of the axis (0 for no wrapping).
+    out : NDArray[np.float64]
+        The shifted coordinates.
+    """
+    for i in prange(x.size):
+        v = x[i] - offset
+        if period > 0.0:
+            v %= period
+            # v % L rounds up to L for tiny negative v
+            if v >= period:
+                v = 0.0
+        out[i] = v
+
+
+def _shift_into_frame(
+    positions: NDArray[np.float64],
+    boxsize: float | NDArray[np.floating] | None,
+    queries: NDArray[np.float64] | None = None,
+) -> tuple[NDArray[np.float64], NDArray[np.float64], NDArray[np.float64] | None]:
+    """
+    Shift the particles (and query points) into the frame the tree is built in.
+
+    On periodic axes the coordinates are wrapped into ``[0, period)``, which the
+    minimum-image fold needs, with the boundary moved into the widest gap
+    between particles (distances do not change); on free axes they are centred,
+    for the precision of the distances. A periodic axis along which all the
+    points are within half a period of each other becomes free, as no distance
+    along it is shorter through the wrap (the case for a small region of a large
+    box).
+
+    Parameters
+    ----------
+    positions : NDArray[np.float64]
+        Particle positions, shape ``(N, 3)`` with ``N > 0``.
+    boxsize : float or NDArray[np.floating] or None
+        Period of each axis (``None``, or a period ``<= 0``, for a free axis).
+    queries : NDArray[np.float64], optional
+        Query points, shape ``(M, 3)``, shifted with the particles.
+
+    Returns
+    -------
+    tuple[NDArray[np.float64], NDArray[np.float64], NDArray[np.float64] | None]
+        The shifted positions, shape ``(N, 3)``; the period of each axis
+        (``FREE_AXIS`` if free); and the shifted query points, one row per axis,
+        shape ``(3, M)`` (``None`` if none were given).
+    """
+    period = np.full(3, FREE_AXIS)
+    if boxsize is not None:
+        box = np.broadcast_to(np.asarray(boxsize, dtype=np.float64), (3,))
+        period[box > 0] = box[box > 0]
+    shifted = np.empty_like(positions)
+    shifted_queries = None if queries is None else np.empty((3, queries.shape[0]))
+    for d in range(3):
+        x = np.ascontiguousarray(positions[:, d])
+        column = np.empty_like(x)
+        if period[d] < FREE_AXIS:
+            offset = _periodic_cut(x, period[d])
+            _shift_axis(x, offset, period[d], column)
+            low, high = column.min(), column.max()
+        else:
+            offset = 0.5 * (x.min() + x.max())
+            _shift_axis(x, offset, 0.0, column)
+        shifted[:, d] = column
+        if queries is not None:
+            q = np.ascontiguousarray(queries[:, d])
+            wrap = period[d] if period[d] < FREE_AXIS else 0.0
+            _shift_axis(q, offset, wrap, shifted_queries[d])
+            if period[d] < FREE_AXIS:
+                # A query outside the particles' range can be nearer through
+                # the wrap, so all the points must be within half a period
+                low = min(low, shifted_queries[d].min())
+                high = max(high, shifted_queries[d].max())
+        if period[d] < FREE_AXIS and high - low <= 0.5 * period[d]:
+            period[d] = FREE_AXIS
+    return shifted, period, shifted_queries
 
 
 def k_nearest_distances(
@@ -1581,33 +1901,58 @@ def k_nearest_distances(
     n = positions.shape[0]
     if n == 0:
         return np.zeros(0)
-    period = np.full(3, FREE_AXIS)
-    if boxsize is not None:
-        box = np.broadcast_to(np.asarray(boxsize, dtype=np.float64), (3,))
-        period[box > 0] = box[box > 0]
-    # Wrapped into [0, period) on periodic axes, which the minimum-image fold
-    # needs, with the boundary moved into the widest gap between particles
-    # (distances do not change); centred on free axes, for the precision of
-    # the distances
-    low = positions.min(axis=0)
-    high = positions.max(axis=0)
-    shifted = np.empty_like(positions)
-    for d in range(3):
-        if period[d] < FREE_AXIS:
-            cut = _periodic_cut(positions[:, d], period[d])
-            x = (positions[:, d] - cut) % period[d]
-            # x % L rounds up to L for tiny negative x
-            x[x >= period[d]] = 0.0
-            shifted[:, d] = x
-            # Particles within half a period of each other along an axis are
-            # never nearer through the wrap (nor are nodes), so that axis can be
-            # free: the case for a small region of a large box
-            if np.ptp(x) <= 0.5 * period[d]:
-                period[d] = FREE_AXIS
-        else:
-            shifted[:, d] = positions[:, d] - 0.5 * (low[d] + high[d])
+    shifted, period, _ = _shift_into_frame(positions, boxsize)
     depth = _tree_depth(n, LEAF_SIZE)
     tree = _build(shifted, depth)
     return _query_all(
         int(k), int(heap_k), get_num_threads(), *tree[:5], period, *tree[5:], depth
+    )
+
+
+def nearest_particles(
+    positions: NDArray[np.floating],
+    queries: NDArray[np.floating],
+    boxsize: float | NDArray[np.floating] | None = None,
+) -> NDArray[np.int64]:
+    """
+    Find the particle nearest to each of a set of points.
+
+    The same as ``scipy.spatial.cKDTree(positions, boxsize=boxsize).query(queries)``
+    (up to the choice between particles at equal distances). Consecutive query
+    points should be near each other (as the pixels of an image), as each search
+    starts from the particle nearest to the point before. Runs on
+    ``numba.get_num_threads()`` threads.
+
+    Parameters
+    ----------
+    positions : NDArray[np.floating]
+        Particle positions, shape ``(N, 3)`` with ``N > 0``.
+    queries : NDArray[np.floating]
+        Query points, shape ``(M, 3)``.
+    boxsize : float or NDArray[np.floating] or None, optional
+        Periodic box: distances are minimum-image distances along every axis
+        with a positive period (the coordinates are wrapped into it). ``None``
+        (default), or a period ``<= 0``, leaves that axis non-periodic.
+
+    Returns
+    -------
+    NDArray[np.int64]
+        The index of the nearest particle to each query point, shape ``(M,)``.
+    """
+    positions = np.asarray(positions, dtype=np.float64)
+    queries = np.asarray(queries, dtype=np.float64).reshape(-1, 3)
+    if positions.shape[0] == 0:
+        raise ValueError("Cannot find the nearest of no particles.")
+    shifted, period, shifted_queries = _shift_into_frame(positions, boxsize, queries)
+    depth = _tree_depth(positions.shape[0], LEAF_SIZE)
+    tree = _build(shifted, depth)
+    return _nearest_all(
+        shifted_queries[0],
+        shifted_queries[1],
+        shifted_queries[2],
+        get_num_threads(),
+        *tree[:5],
+        period,
+        *tree[5:],
+        depth,
     )
