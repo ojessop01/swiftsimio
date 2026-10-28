@@ -26,6 +26,7 @@ from swiftsimio.visualisation.power_spectrum import (
     folded_depositions_to_power_spectrum,
 )
 from swiftsimio.visualisation.smoothing_length import generate_smoothing_lengths
+from swiftsimio.visualisation.kernels import kernel_names, specialise_for_kernel
 from swiftsimio.optional_packages import CudaSupportError, CUDA_AVAILABLE
 
 from swiftsimio.objects import cosmo_array, cosmo_quantity, a
@@ -85,9 +86,8 @@ class TestProjection:
     @pytest.mark.parametrize("backend", projection_backends.keys())
     def test_scatter(self, backend, save=False):
         """Tests the scatter functions from all projection backends."""
-        if backend == "gpu":
-            # https://github.com/SWIFTSIM/swiftsimio/issues/229
-            pytest.xfail("gpu backend currently broken")
+        if backend == "gpu" and not CUDA_AVAILABLE:
+            pytest.skip("CUDA is not available")
         try:
             image = projection_backends[backend](
                 x=np.array([0.0, 1.0, 1.0, -0.000_001]),
@@ -109,7 +109,8 @@ class TestProjection:
 
         return
 
-    def test_scatter_mass_conservation(self):
+    @pytest.mark.parametrize("kernel", kernel_names)
+    def test_scatter_mass_conservation(self, kernel):
         """Check that projecting insets all of the mass into the projection."""
         np.random.seed(971_263)
         # Width of 0.8 centered on 0.5, 0.5.
@@ -122,7 +123,7 @@ class TestProjection:
         total_mass = np.sum(m)
 
         for resolution in resolutions:
-            scatter = projection_backends["fast"]
+            scatter = specialise_for_kernel(projection_backends["fast"], kernel)
             image = scatter(x=x, y=y, m=m, h=h, res=resolution, box_x=1.0, box_y=1.0)
             mass_in_image = image.sum() / (resolution**2)
 
@@ -131,8 +132,9 @@ class TestProjection:
 
         return
 
+    @pytest.mark.parametrize("kernel", kernel_names)
     @pytest.mark.parametrize("backend", ["fast", "nested"])
-    def test_scatter_parallel(self, backend, save=False):
+    def test_scatter_parallel(self, backend, kernel, save=False):
         """Check that parallel projection is equivalent to serial projection."""
         number_of_parts = 1000
         h_max = np.float32(0.05)
@@ -146,8 +148,10 @@ class TestProjection:
         hsml = np.random.rand(number_of_parts).astype(np.float32) * h_max
         masses = np.ones(number_of_parts, dtype=np.float32)
 
-        scatter = projection_backends[backend]
-        scatter_parallel = projection_backends_parallel[backend]
+        scatter = specialise_for_kernel(projection_backends[backend], kernel)
+        scatter_parallel = specialise_for_kernel(
+            projection_backends_parallel[backend], kernel
+        )
         image = scatter(
             x=coordinates[0],
             y=coordinates[1],
@@ -201,9 +205,8 @@ class TestProjection:
         ref_img for each one. Could use a fixture.
         """
         sd = load(cosmological_volume_only_single_local)
-        if backend == "gpu":
-            # https://github.com/SWIFTSIM/swiftsimio/issues/229
-            pytest.xfail("gpu backend currently broken")
+        if backend == "gpu" and not CUDA_AVAILABLE:
+            pytest.skip("CUDA is not available")
         parallel = True
         lbox = sd.metadata.boxsize[0].to_comoving().to_value(unyt.Mpc)
         box_res = 256
@@ -368,9 +371,8 @@ class TestProjection:
     @pytest.mark.parametrize("backend", projection_backends.keys())
     def test_periodic_boundary_wrapping(self, backend):
         """Test that a single particle wraps properly around the periodic boundary."""
-        if backend == "gpu":
-            # https://github.com/SWIFTSIM/swiftsimio/issues/229
-            pytest.xfail("gpu backend currently broken")
+        if backend == "gpu" and not CUDA_AVAILABLE:
+            pytest.skip("CUDA is not available")
 
         pixel_resolution = 128  # the nested backend needs a multiple of 2**nlevels
         boxsize = 1.0
@@ -455,7 +457,8 @@ class TestNestedProjection:
         ratios = np.abs(image_fast[nonzero] / image_nested[nonzero] - 1)
         assert np.sum(ratios < 0.1) / ratios.size > 0.95
 
-    def test_mass_conservation(self):
+    @pytest.mark.parametrize("kernel", kernel_names)
+    def test_mass_conservation(self, kernel):
         """Total mass deposited by the nested backend should equal total input mass."""
         number_of_parts = 1000
         resolution = 64
@@ -465,7 +468,7 @@ class TestNestedProjection:
         hsml = (rng.random(number_of_parts).astype(np.float32) * 0.2).clip(1e-4)
         masses = rng.random(number_of_parts).astype(np.float32)
 
-        image = projection_backends["nested"](
+        image = specialise_for_kernel(projection_backends["nested"], kernel)(
             x=coordinates[0],
             y=coordinates[1],
             m=masses,
@@ -545,7 +548,8 @@ class TestSlice:
 
         return
 
-    def test_slice_parallel(self, save=False):
+    @pytest.mark.parametrize("kernel", kernel_names)
+    def test_slice_parallel(self, kernel, save=False):
         """Check that parallel slice and serial slice are equivalent."""
         number_of_parts = 1000
         h_max = np.float32(0.05)
@@ -561,7 +565,15 @@ class TestSlice:
         masses = np.ones(number_of_parts, dtype=np.float32)
 
         for backend in slice_backends.keys():
-            image = slice_backends[backend](
+            # only the sph backend uses a kernel
+            scatter, scatter_parallel = (
+                slice_backends[backend],
+                slice_backends_parallel[backend],
+            )
+            if backend == "sph":
+                scatter = specialise_for_kernel(scatter, kernel)
+                scatter_parallel = specialise_for_kernel(scatter_parallel, kernel)
+            image = scatter(
                 x=coordinates[0],
                 y=coordinates[1],
                 z=coordinates[2],
@@ -574,7 +586,7 @@ class TestSlice:
                 box_y=1.0,
                 box_z=1.0,
             )
-            image_par = slice_backends_parallel[backend](
+            image_par = scatter_parallel(
                 x=coordinates[0],
                 y=coordinates[1],
                 z=coordinates[2],
@@ -598,9 +610,8 @@ class TestSlice:
     @pytest.mark.parametrize("backend", slice_backends.keys())
     def test_periodic_boundary_wrapping(self, backend):
         """Check that a single particle wraps properly around the periodic boundary."""
-        if backend == "gpu":
-            # https://github.com/SWIFTSIM/swiftsimio/issues/229
-            pytest.xfail("gpu backend currently broken")
+        if backend == "gpu" and not CUDA_AVAILABLE:
+            pytest.skip("CUDA is not available")
 
         pixel_resolution = 100
         boxsize = 1.0
@@ -855,8 +866,9 @@ class TestVolumeRender:
 
         return
 
+    @pytest.mark.parametrize("kernel", kernel_names)
     @pytest.mark.parametrize("backend", ["scatter", "nested"])
-    def test_volume_parallel(self, backend):
+    def test_volume_parallel(self, backend, kernel):
         """Check that volume render in parallel matches serial volume render."""
         number_of_parts = 1000
         h_max = np.float32(0.05)
@@ -870,7 +882,7 @@ class TestVolumeRender:
         hsml = np.random.rand(number_of_parts).astype(np.float32) * h_max
         masses = np.ones(number_of_parts, dtype=np.float32)
 
-        scatter = volume_render_backends[backend]
+        scatter = specialise_for_kernel(volume_render_backends[backend], kernel)
         image = scatter(
             x=coordinates[0],
             y=coordinates[1],
@@ -882,7 +894,9 @@ class TestVolumeRender:
             box_y=1.0,
             box_z=1.0,
         )
-        scatter_parallel = volume_render_backends_parallel[backend]
+        scatter_parallel = specialise_for_kernel(
+            volume_render_backends_parallel[backend], kernel
+        )
         image_par = scatter_parallel(
             x=coordinates[0],
             y=coordinates[1],
@@ -1275,7 +1289,8 @@ class TestNestedVolumeRender:
         ratios = np.abs(image_scatter[nonzero] / image_nested[nonzero] - 1)
         assert np.sum(ratios < 0.1) / ratios.size > 0.95
 
-    def test_mass_conservation(self):
+    @pytest.mark.parametrize("kernel", kernel_names)
+    def test_mass_conservation(self, kernel):
         """Total mass deposited by the nested backend should equal total input mass."""
         number_of_parts = 1000
         resolution = 32
@@ -1285,7 +1300,7 @@ class TestNestedVolumeRender:
         hsml = (rng.random(number_of_parts).astype(np.float32) * 0.05).clip(1e-4)
         masses = rng.random(number_of_parts).astype(np.float32)
 
-        scatter = volume_render_backends["nested"]
+        scatter = specialise_for_kernel(volume_render_backends["nested"], kernel)
         image = scatter(
             x=coordinates[0],
             y=coordinates[1],
@@ -1730,9 +1745,8 @@ class TestProjectionBackends:
     )
     def test_subsampled_no_overlap(self, backend, res=8, save=False):
         """Check a particle fully contained in a pixel."""
-        if backend == "gpu":
-            # https://github.com/SWIFTSIM/swiftsimio/issues/229
-            pytest.xfail("gpu backend currently broken")
+        if backend == "gpu" and not CUDA_AVAILABLE:
+            pytest.skip("CUDA is not available")
         if save:
             import matplotlib.pyplot as plt
         # very small kernel centred in a pixel
@@ -1759,12 +1773,11 @@ class TestProjectionBackends:
         )
         assert (one_px_img > 0).sum() == 1
 
-    @pytest.mark.parametrize("backend", ("subsampled", "subsampled_extreme", "gpu"))
+    @pytest.mark.parametrize("backend", ("subsampled", "subsampled_extreme"))
     def test_subsampled_bisected_unresolved(self, backend, res=8, save=False):
         """Check a particle bisected twice into 4 pixels but smaller than the pixels."""
-        if backend == "gpu":
-            # https://github.com/SWIFTSIM/swiftsimio/issues/229
-            pytest.xfail("gpu backend currently broken")
+        if backend == "gpu" and not CUDA_AVAILABLE:
+            pytest.skip("CUDA is not available")
         if save:
             import matplotlib.pyplot as plt
         # kernel bisected in both directions, smaller than pixel
@@ -1801,9 +1814,8 @@ class TestProjectionBackends:
     )
     def test_subsampled_bisected_resolved(self, backend, res=8, save=False):
         """Check a particle bisected twice and resolved by many pixels."""
-        if backend == "gpu":
-            # https://github.com/SWIFTSIM/swiftsimio/issues/229
-            pytest.xfail("gpu backend currently broken")
+        if backend == "gpu" and not CUDA_AVAILABLE:
+            pytest.skip("CUDA is not available")
         if save:
             import matplotlib.pyplot as plt
         # kernel bisected in both directions, touches edge of box
@@ -1826,15 +1838,15 @@ class TestProjectionBackends:
             "subsampled_extreme": 44,
             "fast": 32,
             "renormalised": 32,
+            "gpu": 32,
         }[backend]
         assert np.isclose(smooth_img.sum(), 1.0, atol=1e-2)
 
-    @pytest.mark.parametrize("backend", ("subsampled", "subsampled_extreme", "gpu"))
+    @pytest.mark.parametrize("backend", ("subsampled", "subsampled_extreme"))
     def test_subsampled_corner_pixels(self, backend, res=8, save=False):
         """Check a particle that "touches" pixels in all 4 corners."""
-        if backend == "gpu":
-            # https://github.com/SWIFTSIM/swiftsimio/issues/229
-            pytest.xfail("gpu backend currently broken")
+        if backend == "gpu" and not CUDA_AVAILABLE:
+            pytest.skip("CUDA is not available")
         if save:
             import matplotlib.pyplot as plt
         # kernel in upper right corner, wraps to all 4 corners
@@ -1871,9 +1883,8 @@ class TestProjectionBackends:
         unintentionally writing to negative image offsets (img[-1, -1]) that can arise
         when multiple box lengths are covered in the region.
         """
-        if backend == "gpu":
-            # https://github.com/SWIFTSIM/swiftsimio/issues/229
-            pytest.xfail("gpu backend currently broken")
+        if backend == "gpu" and not CUDA_AVAILABLE:
+            pytest.skip("CUDA is not available")
         if save:
             import matplotlib.pyplot as plt
         # image repeats in each quadrant with periodic wrapping
@@ -1904,9 +1915,8 @@ class TestProjectionBackends:
         repeating_img = scatter(**kwargs)
         # first quadrant image tiled should match explicitly tiled image
         diff = repeating_img - np.block([[ref_img, ref_img], [ref_img, ref_img]])
-        if backend == "gpu":
-            # https://github.com/SWIFTSIM/swiftsimio/issues/229
-            pytest.xfail("gpu backend currently broken")
+        if backend == "gpu" and not CUDA_AVAILABLE:
+            pytest.skip("CUDA is not available")
         if save:
             plt.imsave("test_image_creation.png", repeating_img.T, origin="lower")
             plt.imsave(
