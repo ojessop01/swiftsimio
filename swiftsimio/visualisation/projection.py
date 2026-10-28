@@ -8,6 +8,7 @@ from swiftsimio import SWIFTDataset, cosmo_array
 from swiftsimio.reader import __SWIFTGroupDataset
 from swiftsimio.visualisation.projection_backends import backends, backends_parallel
 from swiftsimio.visualisation.smoothing_length import backends_get_hsml
+from swiftsimio.visualisation.kernels import specialise_for_kernel
 from swiftsimio.visualisation._vistools import (
     _get_projection_field,
     _get_region_info,
@@ -27,6 +28,7 @@ def project_pixel_grid(
     parallel: bool = False,
     backend: str = "fast",
     periodic: bool = True,
+    kernel: str = "wendland_C2",
     **kwargs: dict[str, Any],
 ) -> cosmo_array:
     r"""
@@ -86,6 +88,15 @@ def project_pixel_grid(
     periodic : bool, optional
         Account for periodic boundary conditions for the simulation box?
         Defaults to ``True``.
+
+    kernel : str, optional
+        SPH kernel used to smooth the particles: one of ``"wendland_C2"``,
+        ``"cubic_spline"``, ``"quartic_spline"``, ``"quintic_spline"``,
+        ``"wendland_C4"`` or ``"wendland_C6"`` (see
+        :mod:`swiftsimio.visualisation.kernels`). Defaults to ``"wendland_C2"``.
+        To use the kernel the simulation was run with, pass
+        ``data.metadata.hydro_scheme["Kernel function"]``. Ignored by the
+        ``"histogram"`` backend.
 
     **kwargs : dict[str, Any]
         Additional keyword arguments passed through to the backend function,
@@ -156,6 +167,8 @@ def project_pixel_grid(
     )
     norm = region_info["x_range"] * region_info["y_range"]
     backend_func = (backends_parallel if parallel else backends)[backend]
+    if backend != "histogram":
+        backend_func = specialise_for_kernel(backend_func, kernel)
     image = backend_strip_and_restore_cosmo_and_units(backend_func, norm=norm)(
         **backend_kwargs, **kwargs
     )
@@ -183,6 +196,7 @@ def project_gas(
     parallel: bool = False,
     backend: str = "fast",
     periodic: bool = True,
+    kernel: str = "wendland_C2",
     **kwargs: dict[str, Any],
 ) -> cosmo_array:
     r"""
@@ -243,6 +257,15 @@ def project_gas(
         Account for periodic boundary conditions for the simulation box?
         Defaults to ``True``.
 
+    kernel : str, optional
+        SPH kernel used to smooth the particles: one of ``"wendland_C2"``,
+        ``"cubic_spline"``, ``"quartic_spline"``, ``"quintic_spline"``,
+        ``"wendland_C4"`` or ``"wendland_C6"`` (see
+        :mod:`swiftsimio.visualisation.kernels`). Defaults to ``"wendland_C2"``.
+        To use the kernel the simulation was run with, pass
+        ``data.metadata.hydro_scheme["Kernel function"]``. Ignored by the
+        ``"histogram"`` backend.
+
     **kwargs : dict[str, Any]
         Additional keyword arguments passed through to the backend function,
         for example ``ntarget`` and ``nlevels`` for ``backend="nested"``. See
@@ -275,5 +298,6 @@ def project_gas(
         rotation_center=rotation_center,
         backend=backend,
         periodic=periodic,
+        kernel=kernel,
         **kwargs,
     )

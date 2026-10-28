@@ -7,7 +7,12 @@ import numpy as np
 import pytest
 
 from swiftsimio.visualisation.projection_backends import backends, backends_parallel
-from swiftsimio.visualisation.projection_backends.kernels import kernel_gamma
+from swiftsimio.visualisation.kernels import (
+    kernel_constant_2d,
+    kernel_gamma_2d,
+    kernel_names,
+    kernel_shape,
+)
 from swiftsimio.visualisation.projection_backends.wgpu import scatter
 
 
@@ -95,8 +100,9 @@ def test_invalid_input(kwargs):
 
 
 @pytest.mark.usefixtures("wgpu_device")
+@pytest.mark.parametrize("kernel_id", range(len(kernel_names)))
 @pytest.mark.parametrize("box", [(0.0, 0.0), (1.0, 1.0), (0.4, 0.7), (0.0, 0.6)])
-def test_matches_kernel(box):
+def test_matches_kernel(box, kernel_id):
     """
     Compare splats to analytic kernels, including tiling and axis orientation.
 
@@ -104,13 +110,16 @@ def test_matches_kernel(box):
     ----------
     box : tuple[float, float]
         Periodic box sizes along the x and y axes. Zero disables wrapping.
+
+    kernel_id : int
+        Index of the SPH kernel to use.
     """
     res = 65  # Also exercise readback with unaligned row lengths.
     x = np.array([0.03, 0.72, 1.04])
     y = np.array([0.63, 0.22, 0.81])
     m = np.array([2.0, -0.7, 1.1])
     h = np.array([0.08, 0.045, 0.09])
-    actual = scatter(x, y, m, h, res, *box)
+    actual = scatter(x, y, m, h, res, *box, kernel_id=kernel_id)
     assert actual.shape == (res, res)
     assert actual.dtype == np.float32
     xx, yy = np.meshgrid(
@@ -119,12 +128,12 @@ def test_matches_kernel(box):
     expected = np.zeros((res, res))
     shifts = [range(1) if b == 0 else range(-1, int(np.ceil(1 / b)) + 1) for b in box]
     for px, py, weight, hsml in zip(x, y, m, h):
-        radius = float(kernel_gamma) * hsml
+        radius = float(kernel_gamma_2d[kernel_id]) * hsml
         for dx in shifts[0]:
             for dy in shifts[1]:
                 q = np.hypot(xx - px - dx * box[0], yy - py - dy * box[1]) / radius
-                t = np.maximum(1 - q, 0)
-                expected += weight * 2.22817109 / radius**2 * t**4 * (1 + 4 * q)
+                shape = np.vectorize(lambda v: kernel_shape(v, kernel_id))(q)
+                expected += weight * kernel_constant_2d[kernel_id] / radius**2 * shape
     np.testing.assert_allclose(actual, expected, rtol=3e-4, atol=2e-4)
 
 
