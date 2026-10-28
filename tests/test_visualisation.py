@@ -85,9 +85,8 @@ class TestProjection:
     @pytest.mark.parametrize("backend", projection_backends.keys())
     def test_scatter(self, backend, save=False):
         """Tests the scatter functions from all projection backends."""
-        if backend == "gpu":
-            # https://github.com/SWIFTSIM/swiftsimio/issues/229
-            pytest.xfail("gpu backend currently broken")
+        if backend == "gpu" and not CUDA_AVAILABLE:
+            pytest.skip("CUDA is not available")
         try:
             image = projection_backends[backend](
                 x=np.array([0.0, 1.0, 1.0, -0.000_001]),
@@ -201,9 +200,8 @@ class TestProjection:
         ref_img for each one. Could use a fixture.
         """
         sd = load(cosmological_volume_only_single_local)
-        if backend == "gpu":
-            # https://github.com/SWIFTSIM/swiftsimio/issues/229
-            pytest.xfail("gpu backend currently broken")
+        if backend == "gpu" and not CUDA_AVAILABLE:
+            pytest.skip("CUDA is not available")
         parallel = True
         lbox = sd.metadata.boxsize[0].to_comoving().to_value(unyt.Mpc)
         box_res = 256
@@ -368,9 +366,8 @@ class TestProjection:
     @pytest.mark.parametrize("backend", projection_backends.keys())
     def test_periodic_boundary_wrapping(self, backend):
         """Test that a single particle wraps properly around the periodic boundary."""
-        if backend == "gpu":
-            # https://github.com/SWIFTSIM/swiftsimio/issues/229
-            pytest.xfail("gpu backend currently broken")
+        if backend == "gpu" and not CUDA_AVAILABLE:
+            pytest.skip("CUDA is not available")
 
         pixel_resolution = 128  # the nested backend needs a multiple of 2**nlevels
         boxsize = 1.0
@@ -598,9 +595,8 @@ class TestSlice:
     @pytest.mark.parametrize("backend", slice_backends.keys())
     def test_periodic_boundary_wrapping(self, backend):
         """Check that a single particle wraps properly around the periodic boundary."""
-        if backend == "gpu":
-            # https://github.com/SWIFTSIM/swiftsimio/issues/229
-            pytest.xfail("gpu backend currently broken")
+        if backend == "gpu" and not CUDA_AVAILABLE:
+            pytest.skip("CUDA is not available")
 
         pixel_resolution = 100
         boxsize = 1.0
@@ -1730,9 +1726,8 @@ class TestProjectionBackends:
     )
     def test_subsampled_no_overlap(self, backend, res=8, save=False):
         """Check a particle fully contained in a pixel."""
-        if backend == "gpu":
-            # https://github.com/SWIFTSIM/swiftsimio/issues/229
-            pytest.xfail("gpu backend currently broken")
+        if backend == "gpu" and not CUDA_AVAILABLE:
+            pytest.skip("CUDA is not available")
         if save:
             import matplotlib.pyplot as plt
         # very small kernel centred in a pixel
@@ -1759,12 +1754,11 @@ class TestProjectionBackends:
         )
         assert (one_px_img > 0).sum() == 1
 
-    @pytest.mark.parametrize("backend", ("subsampled", "subsampled_extreme", "gpu"))
+    @pytest.mark.parametrize("backend", ("subsampled", "subsampled_extreme"))
     def test_subsampled_bisected_unresolved(self, backend, res=8, save=False):
         """Check a particle bisected twice into 4 pixels but smaller than the pixels."""
-        if backend == "gpu":
-            # https://github.com/SWIFTSIM/swiftsimio/issues/229
-            pytest.xfail("gpu backend currently broken")
+        if backend == "gpu" and not CUDA_AVAILABLE:
+            pytest.skip("CUDA is not available")
         if save:
             import matplotlib.pyplot as plt
         # kernel bisected in both directions, smaller than pixel
@@ -1801,9 +1795,8 @@ class TestProjectionBackends:
     )
     def test_subsampled_bisected_resolved(self, backend, res=8, save=False):
         """Check a particle bisected twice and resolved by many pixels."""
-        if backend == "gpu":
-            # https://github.com/SWIFTSIM/swiftsimio/issues/229
-            pytest.xfail("gpu backend currently broken")
+        if backend == "gpu" and not CUDA_AVAILABLE:
+            pytest.skip("CUDA is not available")
         if save:
             import matplotlib.pyplot as plt
         # kernel bisected in both directions, touches edge of box
@@ -1826,15 +1819,15 @@ class TestProjectionBackends:
             "subsampled_extreme": 44,
             "fast": 32,
             "renormalised": 32,
+            "gpu": 32,
         }[backend]
         assert np.isclose(smooth_img.sum(), 1.0, atol=1e-2)
 
-    @pytest.mark.parametrize("backend", ("subsampled", "subsampled_extreme", "gpu"))
+    @pytest.mark.parametrize("backend", ("subsampled", "subsampled_extreme"))
     def test_subsampled_corner_pixels(self, backend, res=8, save=False):
         """Check a particle that "touches" pixels in all 4 corners."""
-        if backend == "gpu":
-            # https://github.com/SWIFTSIM/swiftsimio/issues/229
-            pytest.xfail("gpu backend currently broken")
+        if backend == "gpu" and not CUDA_AVAILABLE:
+            pytest.skip("CUDA is not available")
         if save:
             import matplotlib.pyplot as plt
         # kernel in upper right corner, wraps to all 4 corners
@@ -1871,9 +1864,8 @@ class TestProjectionBackends:
         unintentionally writing to negative image offsets (img[-1, -1]) that can arise
         when multiple box lengths are covered in the region.
         """
-        if backend == "gpu":
-            # https://github.com/SWIFTSIM/swiftsimio/issues/229
-            pytest.xfail("gpu backend currently broken")
+        if backend == "gpu" and not CUDA_AVAILABLE:
+            pytest.skip("CUDA is not available")
         if save:
             import matplotlib.pyplot as plt
         # image repeats in each quadrant with periodic wrapping
@@ -1904,9 +1896,8 @@ class TestProjectionBackends:
         repeating_img = scatter(**kwargs)
         # first quadrant image tiled should match explicitly tiled image
         diff = repeating_img - np.block([[ref_img, ref_img], [ref_img, ref_img]])
-        if backend == "gpu":
-            # https://github.com/SWIFTSIM/swiftsimio/issues/229
-            pytest.xfail("gpu backend currently broken")
+        if backend == "gpu" and not CUDA_AVAILABLE:
+            pytest.skip("CUDA is not available")
         if save:
             plt.imsave("test_image_creation.png", repeating_img.T, origin="lower")
             plt.imsave(

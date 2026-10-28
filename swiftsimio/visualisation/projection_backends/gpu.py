@@ -1,5 +1,7 @@
 """Kernel evaluation on the GPU."""
 
+import math
+
 import numpy as np
 from swiftsimio.optional_packages import (
     CUDA_AVAILABLE,
@@ -11,7 +13,7 @@ from swiftsimio.optional_packages import (
 kernel_gamma = np.float32(1.897367)
 
 
-@cuda_jit("np.float32(np.float32, np.float32)", device=True)
+@cuda_jit("float32(float32, float32)", device=True)
 def kernel(r: np.float32, H: np.float32) -> np.float32:
     """
     Single precision kernel implementation for swiftsimio.
@@ -60,8 +62,8 @@ def kernel(r: np.float32, H: np.float32) -> np.float32:
 
 
 @cuda_jit(
-    "void(np.float64[:], np.float64[:], np.float32[:], np.float32[:], np.float64, "
-    "np.float64, np.float32[:,:])"
+    "void(float64[:], float64[:], float32[:], float32[:], float64, float64, "
+    "float32[:,:])"
 )
 def scatter_gpu(
     x: np.float64,
@@ -136,8 +138,8 @@ def scatter_gpu(
 
         # Calculate the cell that this particle; use the 64 bit version of the
         # resolution as this is the same type as the positions
-        particle_cell_x = np.int32(np.floor(float_res_64 * x_pos))
-        particle_cell_y = np.int32(np.floor(float_res_64 * y_pos))
+        particle_cell_x = np.int32(math.floor(float_res_64 * x_pos))
+        particle_cell_y = np.int32(math.floor(float_res_64 * y_pos))
 
         # SWIFT stores hsml as the FWHM.
         kernel_width = kernel_gamma * hsml
@@ -188,7 +190,7 @@ def scatter_gpu(
                     distance_y -= np.float32(y_pos)
                     distance_y_2 = distance_y * distance_y
 
-                    r = np.sqrt(distance_x_2 + distance_y_2)
+                    r = math.sqrt(distance_x_2 + distance_y_2)
 
                     kernel_eval = kernel(r, kernel_width)
 
@@ -257,6 +259,14 @@ def scatter(
             "is only available on systems with supported GPUs."
         )
 
+    # The GPU kernel is compiled for these exact types and needs contiguous arrays.
+    x = np.ascontiguousarray(x, dtype=np.float64)
+    y = np.ascontiguousarray(y, dtype=np.float64)
+    m = np.ascontiguousarray(m, dtype=np.float32)
+    h = np.ascontiguousarray(h, dtype=np.float32)
+    box_x = float(box_x)
+    box_y = float(box_y)
+
     output = cuda.device_array((res, res), dtype=np.float32)
     output[:] = 0
 
@@ -275,7 +285,7 @@ def scatter(
     # copies for each particle
     threads_per_block = (16, 1, 1)
     blocks_per_grid = (
-        np.ceil(n_part / threads_per_block[0]),
+        int(np.ceil(n_part / threads_per_block[0])),
         n_xshift // threads_per_block[1],
         n_yshift // threads_per_block[2],
     )
