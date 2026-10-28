@@ -81,9 +81,9 @@ compact-support radius is estimated:
 
    N_\mathrm{cells} = \gamma_k \, h \, r
 
-where :math:`r` is ``res`` and :math:`\gamma_k` is the Wendland-C2 kernel
-gamma (:math:`1.897367` in 2D, :math:`1.936492` in 3D, the same values used
-by the other backends). The particle is then assigned to hierarchy level
+where :math:`r` is ``res`` and :math:`\gamma_k` is the kernel gamma (for
+the default Wendland-C2 kernel :math:`1.897367` in 2D and :math:`1.936492` in
+3D, the same values used by the other backends; see :doc:`kernels`). The particle is then assigned to hierarchy level
 :math:`L`:
 
 .. math::
@@ -106,8 +106,9 @@ this::
    Level 4 (coarsest)    64 ×   64   — very large, diffuse kernels
 
 **2. Scatter.**
-Each particle is deposited onto its assigned level using the Wendland-C2
-kernel, the same kernel used by the standard backends. In 2D this is
+Each particle is deposited onto its assigned level using the same kernel as
+the standard backends (see :doc:`kernels`). For the default Wendland-C2
+kernel in 2D this is
 
 .. math::
 

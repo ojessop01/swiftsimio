@@ -58,9 +58,62 @@ from swiftsimio.visualisation.nested_grids import (
     validate_hierarchy,
 )
 from swiftsimio.visualisation.projection_backends.kernels import (
-    kernel_gamma,
+    kernel_gamma,  # noqa: F401 (Wendland-C2 value, kept importable from here)
     kernel_constant,
 )
+from swiftsimio.visualisation.kernels import (
+    specialise_for_kernel,
+    kernel_shape,
+    kernel_gamma_2d,
+    kernel_constant_2d,
+)
+
+# Per-kernel support radii and normalisations, indexed by kernel_id. Entry 0
+# keeps the Wendland-C2 constants this backend has always used.
+_kernel_gammas = kernel_gamma_2d.astype(np.float32)
+_kernel_constants = kernel_constant_2d.astype(np.float32)
+_kernel_constants[0] = np.float32(kernel_constant)
+
+
+@njit(fastmath=True, cache=True, nogil=True, inline="always")
+def _weighted_kernel(
+    weighted_prefactor: np.float32,
+    ratio: np.float32,
+    one_minus_ratio_2: np.float32,
+    kernel_id: int,
+) -> np.float32:
+    """
+    Evaluate ``weighted_prefactor * w(ratio)`` for the selected kernel.
+
+    For Wendland-C2 this reuses the caller's ``(1 - ratio)**2`` and works in
+    single precision, exactly as before other kernels were added. The other
+    kernels use :func:`~swiftsimio.visualisation.kernels.kernel_shape`.
+
+    Parameters
+    ----------
+    weighted_prefactor : float32
+        Mass times kernel normalisation times ``H**-2``.
+    ratio : float32
+        Distance in units of the kernel support radius.
+    one_minus_ratio_2 : float32
+        ``(1 - ratio)**2``, already computed by the caller.
+    kernel_id : int
+        Index of the SPH kernel, see
+        :data:`swiftsimio.visualisation.kernels.kernel_names`.
+
+    Returns
+    -------
+    float32
+        Kernel contribution to the cell.
+    """
+    if kernel_id == 0:
+        return (
+            weighted_prefactor
+            * one_minus_ratio_2
+            * one_minus_ratio_2
+            * (np.float32(1.0) + np.float32(4.0) * ratio)
+        )
+    return weighted_prefactor * np.float32(kernel_shape(ratio, kernel_id))
 
 
 @njit(
@@ -83,6 +136,7 @@ def _deposit_particle_flat(
     level: int,
     bounds_min: NDArray[np.int32],
     bounds_max: NDArray[np.int32],
+    kernel_id: int,
 ) -> None:
     """
     Deposit one particle onto the flat destination array at the given level.
@@ -123,6 +177,9 @@ def _deposit_particle_flat(
         Per-level bounding-box minimum cell indices (updated in-place).
     bounds_max : np.ndarray[int32, shape=(nlevels+1, 2)]
         Per-level bounding-box maximum cell indices (updated in-place).
+    kernel_id : int
+        Index of the SPH kernel, see
+        :data:`swiftsimio.visualisation.kernels.kernel_names`.
     """
     # Positions scaled to cell-index space; float64 for accurate index derivation.
     scaled_x_64 = np.float64(level_res) * x_pos
@@ -197,10 +254,9 @@ def _deposit_particle_flat(
             one_minus_ratio = np.float32(1.0) - ratio
             one_minus_ratio_2 = one_minus_ratio * one_minus_ratio
             destination[level_offset + x_start * level_res + y_start] += (
-                weighted_prefactor
-                * one_minus_ratio_2
-                * one_minus_ratio_2
-                * (np.float32(1.0) + np.float32(4.0) * ratio)
+                _weighted_kernel(
+                    weighted_prefactor, ratio, one_minus_ratio_2, kernel_id
+                )
             )
         return
 
@@ -234,11 +290,8 @@ def _deposit_particle_flat(
                 ratio = sqrt(dx_2 + dy * dy) * inverse_radius_cells
                 one_minus_ratio = np.float32(1.0) - ratio
                 one_minus_ratio_2 = one_minus_ratio * one_minus_ratio
-                destination[flat_cell] += (
-                    weighted_prefactor
-                    * one_minus_ratio_2
-                    * one_minus_ratio_2
-                    * (np.float32(1.0) + np.float32(4.0) * ratio)
+                destination[flat_cell] += _weighted_kernel(
+                    weighted_prefactor, ratio, one_minus_ratio_2, kernel_id
                 )
                 flat_cell += 1
                 dy += np.float32(1.0)
@@ -261,6 +314,7 @@ def _scatter_particles(
     box_y: np.float64,
     bounds_min: NDArray[np.int32],
     bounds_max: NDArray[np.int32],
+    kernel_id: int,
 ) -> None:
     """
     Scatter all active particles onto their assigned hierarchy level.
@@ -301,6 +355,9 @@ def _scatter_particles(
         Per-level bounding-box minimum (updated in-place).
     bounds_max : np.ndarray[int32, shape=(nlevels+1, 2)]
         Per-level bounding-box maximum (updated in-place).
+    kernel_id : int
+        Index of the SPH kernel, see
+        :data:`swiftsimio.visualisation.kernels.kernel_names`.
     """
     finest_cells = finest.size
 
@@ -330,11 +387,11 @@ def _scatter_particles(
         original_y = y[particle]
 
         # Compute all per-particle constants once, outside the periodic image loop.
-        kernel_width = np.float32(kernel_gamma) * hsml
+        kernel_width = _kernel_gammas[kernel_id] * hsml
         inverse_kernel_width = np.float32(1.0) / kernel_width
         weighted_prefactor = (
             mass
-            * np.float32(kernel_constant)
+            * _kernel_constants[kernel_id]
             * inverse_kernel_width
             * inverse_kernel_width
         )
@@ -386,6 +443,7 @@ def _scatter_particles(
                     level,
                     bounds_min,
                     bounds_max,
+                    kernel_id,
                 )
 
 
@@ -584,6 +642,7 @@ def _scatter_serial_chunk(
     box_y: np.float64,
     ntarget: int,
     nlevels: int,
+    kernel_id: int = 0,
 ) -> np.ndarray:
     """
     Run the complete serial nested scatter pipeline on one particle chunk.
@@ -614,13 +673,17 @@ def _scatter_serial_chunk(
     nlevels : int
         Maximum hierarchy depth.
 
+    kernel_id : int
+        Index of the SPH kernel, see
+        :data:`swiftsimio.visualisation.kernels.kernel_names`.
+
     Returns
     -------
     np.ndarray[float32, shape=(res, res)]
         Partial pixel grid for this chunk.
     """
     level_index, active_nlevels_val = assign_levels(
-        h, m, res, ntarget, nlevels, kernel_gamma
+        h, m, res, ntarget, nlevels, _kernel_gammas[kernel_id]
     )
     active_nlevels = np.int32(active_nlevels_val)
 
@@ -656,6 +719,7 @@ def _scatter_serial_chunk(
         box_y,
         bounds_min,
         bounds_max,
+        kernel_id,
     )
 
     _collapse_serial_flat(
@@ -681,6 +745,7 @@ def _scatter_parallel_impl(
     box_y: np.float64 = np.float64(0.0),
     ntarget: int = 6,
     nlevels: int = 4,
+    kernel_id: int = 0,
 ) -> np.ndarray:
     """
     Parallel nested multi-resolution scatter.
@@ -712,6 +777,10 @@ def _scatter_parallel_impl(
     nlevels : int
         Maximum hierarchy depth.
 
+    kernel_id : int
+        Index of the SPH kernel, see
+        :data:`swiftsimio.visualisation.kernels.kernel_names`.
+
     Returns
     -------
     np.ndarray[float32, shape=(res, res)]
@@ -740,6 +809,7 @@ def _scatter_parallel_impl(
             box_y,
             ntarget,
             nlevels,
+            kernel_id,
         )
     return output
 
@@ -810,6 +880,7 @@ def scatter(
     box_y: np.float64 = np.float64(0.0),
     ntarget: int = 6,
     nlevels: int = 4,
+    kernel_id: int = 0,
 ) -> np.ndarray:
     """
     Create a weighted scatter plot using nested multi-resolution scatter.
@@ -850,6 +921,11 @@ def scatter(
     nlevels : int
         Maximum number of coarsening levels in the hierarchy. Default is ``4``.
 
+    kernel_id : int
+        Index of the SPH kernel to use, see
+        :data:`swiftsimio.visualisation.kernels.kernel_names`. Defaults to
+        ``0`` (Wendland-C2).
+
     Returns
     -------
     np.ndarray[np.float32, shape=(res, res)]
@@ -859,9 +935,18 @@ def scatter(
     --------
     scatter_parallel : Parallel implementation of this function.
     """
+    serial_chunk = specialise_for_kernel(_scatter_serial_chunk, kernel_id)
     x, y, m, h, res, ntarget, nlevels = _prepare(x, y, m, h, res, ntarget, nlevels)
-    return _scatter_serial_chunk(
-        x, y, m, h, res, np.float64(box_x), np.float64(box_y), ntarget, nlevels
+    return serial_chunk(
+        x,
+        y,
+        m,
+        h,
+        res,
+        np.float64(box_x),
+        np.float64(box_y),
+        ntarget,
+        nlevels,
     )
 
 
@@ -875,6 +960,7 @@ def scatter_parallel(
     box_y: np.float64 = np.float64(0.0),
     ntarget: int = 6,
     nlevels: int = 4,
+    kernel_id: int = 0,
 ) -> np.ndarray:
     """
     Create a weighted scatter plot using nested multi-resolution scatter in parallel.
@@ -915,6 +1001,11 @@ def scatter_parallel(
     nlevels : int
         Maximum number of coarsening levels in the hierarchy. Default is ``4``.
 
+    kernel_id : int
+        Index of the SPH kernel to use, see
+        :data:`swiftsimio.visualisation.kernels.kernel_names`. Defaults to
+        ``0`` (Wendland-C2).
+
     Returns
     -------
     np.ndarray[np.float32, shape=(res, res)]
@@ -924,11 +1015,14 @@ def scatter_parallel(
     --------
     scatter : Serial implementation of this function.
     """
+    serial_chunk = specialise_for_kernel(_scatter_serial_chunk, kernel_id)
     x, y, m, h, res, ntarget, nlevels = _prepare(x, y, m, h, res, ntarget, nlevels)
     box_x = np.float64(box_x)
     box_y = np.float64(box_y)
 
     if get_num_threads() == 1:
-        return _scatter_serial_chunk(x, y, m, h, res, box_x, box_y, ntarget, nlevels)
+        return serial_chunk(x, y, m, h, res, box_x, box_y, ntarget, nlevels)
 
-    return _scatter_parallel_impl(x, y, m, h, res, box_x, box_y, ntarget, nlevels)
+    return specialise_for_kernel(_scatter_parallel_impl, kernel_id)(
+        x, y, m, h, res, box_x, box_y, ntarget, nlevels
+    )

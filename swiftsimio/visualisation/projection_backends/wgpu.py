@@ -1,17 +1,18 @@
-"""Project Wendland-C2 splats using WebGPU."""
+"""Project SPH kernel splats using WebGPU."""
 
 from functools import lru_cache
 
 import numpy as np
 
 from swiftsimio.optional_packages import WGPU_AVAILABLE, wgpu
-from swiftsimio.visualisation.projection_backends.kernels import kernel_gamma
+from swiftsimio.visualisation.kernels import get_kernel_id, kernel_constant_2d
+from swiftsimio.visualisation.projection_backends.kernels import kernel_gammas
 
 
 _SPLAT_WGSL = """
 struct Params {
     box: vec4<f32>, // box sizes and first periodic shifts
-    counts: vec4<u32>, // particle count, number of x copies, resolution
+    counts: vec4<u32>, // particle count, number of x copies, resolution, kernel
 };
 @group(0) @binding(0) var<uniform> p: Params;
 @group(0) @binding(1) var<storage, read> particles: array<vec4<f32>>;
@@ -36,12 +37,46 @@ fn vs_main(@builtin(vertex_index) vertex: u32,
     out.particle = vec4<f32>(centre, particle.zw);
     return out;
 }
+// Shapes of the kernels other than Wendland-C2, for 0 <= r < 1 (see
+// swiftsimio.visualisation.kernels); their normalisation is in the particle weight.
+fn kernel_shape(r: f32, kernel: u32) -> f32 {
+    let t = 1.0-r;
+    let t2 = t*t;
+    switch kernel {
+        case 1u: { // cubic spline
+            var w = t2*t;
+            if (r < 0.5) { let a = 0.5-r; w -= 4.0*a*a*a; }
+            return w;
+        }
+        case 2u: { // quartic spline
+            var w = t2*t2;
+            if (r < 0.6) { let a = 0.6-r; w -= 5.0*a*a*a*a; }
+            if (r < 0.2) { let b = 0.2-r; w += 10.0*b*b*b*b; }
+            return w;
+        }
+        case 3u: { // quintic spline
+            var w = t2*t2*t;
+            if (r < 2.0/3.0) { let a = 2.0/3.0-r; w -= 6.0*a*a*a*a*a; }
+            if (r < 1.0/3.0) { let b = 1.0/3.0-r; w += 15.0*b*b*b*b*b; }
+            return w;
+        }
+        case 4u: { // Wendland-C4
+            return t2*t2*t2 * (1.0+r*(6.0+r*(35.0/3.0)));
+        }
+        default: { // Wendland-C6
+            return t2*t2*t2*t2 * (1.0+r*(8.0+r*(25.0+r*32.0)));
+        }
+    }
+}
 @fragment
 fn fs_main(in: Vertex) -> @location(0) f32 {
     // Evaluate from pixel centres to avoid rasterizer vertex/interpolation rounding.
     let coord = (in.position.xy / f32(p.counts.z) - in.particle.xy) / in.particle.z;
     let r = length(coord);
     if (r >= 1.0) { discard; }
+    if (p.counts.w != 0u) {
+        return in.particle.w * kernel_shape(r, p.counts.w);
+    }
     let t = 1.0-r;
     let kernel = 2.22817109 * t*t*t*t * (1.0+4.0*r);
     return in.particle.w * kernel;
@@ -91,6 +126,7 @@ def scatter(
     res: int,
     box_x: float = 0.0,
     box_y: float = 0.0,
+    kernel_id: int = 0,
 ) -> np.ndarray:
     """
     Project particles with additive GPU splats.
@@ -108,6 +144,9 @@ def scatter(
         Number of pixels along each image axis.
     box_x, box_y : float, optional
         Periodic box sizes in the same coordinates. Zero disables wrapping.
+    kernel_id : int, optional
+        SPH kernel to use, see :data:`swiftsimio.visualisation.kernels.kernel_names`.
+        Defaults to ``0`` (Wendland-C2).
 
     Returns
     -------
@@ -123,7 +162,8 @@ def scatter(
     texture, which is read back to the CPU;
     units and rotations are handled by the projection API.
 
-    Uses the 2D Wendland-C2 kernel with support radius ``1.897367*h``. Support
+    Uses the 2D form of the chosen kernel, with support radius ``gamma*h`` (for
+    the default Wendland-C2 kernel, ``1.897367*h``). Support
     radii smaller than two pixels are broadened to two pixels, with an amplitude
     correction preserving the analytic integral. Pixel-centre
     sampling does not guarantee discrete mass conservation. There is no colour
@@ -146,20 +186,24 @@ def scatter(
         raise ValueError(
             "Smoothing lengths and box sizes must be finite and nonnegative"
         )
+    kernel_id = get_kernel_id(kernel_id)
     image = np.zeros((res, res), dtype=np.float32)
     if not len(x) or not np.any(m):
         return image
 
     device, pipeline = _get_pipeline()
-    radius = np.maximum(kernel_gamma * h, 2.0 / res)
+    radius = np.maximum(kernel_gammas[kernel_id] * h, 2.0 / res)
     coefficients = m / radius**2
+    if kernel_id != 0:
+        # The shader holds the Wendland-C2 normalisation, the others are applied here.
+        coefficients *= kernel_constant_2d[kernel_id]
     scale = np.max(np.abs(coefficients))
     particles = np.column_stack((x, y, radius, coefficients / scale)).astype(np.float32)
     # Tile exactly as the CPU backends, without duplicating particle buffers.
     nx, ny = [1 if b == 0 else int(np.ceil(1 / b)) + 2 for b in (box_x, box_y)]
     params = np.zeros(8, dtype=np.float32)
     params[:4] = box_x, box_y, -int(box_x > 0), -int(box_y > 0)
-    params.view(np.uint32)[4:7] = len(x), nx, res
+    params.view(np.uint32)[4:8] = len(x), nx, res, kernel_id
     particle_buffer = device.create_buffer_with_data(
         data=particles, usage=wgpu.BufferUsage.STORAGE
     )

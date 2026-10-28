@@ -5,6 +5,7 @@ from swiftsimio import SWIFTDataset, cosmo_array, cosmo_quantity
 from swiftsimio.reader import __SWIFTGroupDataset
 from swiftsimio.visualisation.slice_backends import backends, backends_parallel
 from swiftsimio.visualisation.smoothing_length import backends_get_hsml
+from swiftsimio.visualisation.kernels import specialise_for_kernel
 from swiftsimio.visualisation._vistools import (
     _get_projection_field,
     _get_region_info,
@@ -24,6 +25,7 @@ def slice_pixel_grid(
     region: cosmo_array | None = None,
     backend: str = "sph",
     periodic: bool = True,
+    kernel: str = "wendland_C2",
     mask: np.ndarray | None = None,
 ) -> cosmo_array:
     """
@@ -79,6 +81,14 @@ def slice_pixel_grid(
     periodic : bool, optional
         Account for periodic boundaries for the simulation box?
         Default is ``True``.
+
+    kernel : str, optional
+        SPH kernel used to smooth the particles: one of ``"wendland_C2"``,
+        ``"cubic_spline"``, ``"quartic_spline"``, ``"quintic_spline"``,
+        ``"wendland_C4"`` or ``"wendland_C6"`` (see
+        :mod:`swiftsimio.visualisation.kernels`). Defaults to ``"wendland_C2"``.
+        To use the kernel the simulation was run with, pass
+        ``data.metadata.hydro_scheme["Kernel function"]``. Ignored by the ``"nearest_neighbours"`` backend.
 
     mask : np.array, optional
         Allows only a sub-set of the particles in data to be visualised. Useful
@@ -150,6 +160,8 @@ def slice_pixel_grid(
     )
     norm = region_info["max_range"] ** 3
     backend_func = (backends_parallel if parallel else backends)[backend]
+    if backend == "sph":
+        backend_func = specialise_for_kernel(backend_func, kernel)
     image = backend_strip_and_restore_cosmo_and_units(backend_func, norm=norm)(**kwargs)
     return image
 
@@ -165,6 +177,7 @@ def slice_gas(
     region: cosmo_array | None = None,
     backend: str = "sph",
     periodic: bool = True,
+    kernel: str = "wendland_C2",
     mask: np.ndarray | None = None,
 ) -> cosmo_array:
     """
@@ -221,6 +234,14 @@ def slice_gas(
         Account for periodic boundaries for the simulation box?
         Default is ``True``.
 
+    kernel : str, optional
+        SPH kernel used to smooth the particles: one of ``"wendland_C2"``,
+        ``"cubic_spline"``, ``"quartic_spline"``, ``"quintic_spline"``,
+        ``"wendland_C4"`` or ``"wendland_C6"`` (see
+        :mod:`swiftsimio.visualisation.kernels`). Defaults to ``"wendland_C2"``.
+        To use the kernel the simulation was run with, pass
+        ``data.metadata.hydro_scheme["Kernel function"]``. Ignored by the ``"nearest_neighbours"`` backend.
+
     mask : np.array, optional
         Allows only a sub-set of the particles in data to be visualised. Useful
         in cases where you have read data out of a ``velociraptor`` catalogue,
@@ -251,5 +272,6 @@ def slice_gas(
         region=region,
         backend=backend,
         periodic=periodic,
+        kernel=kernel,
         mask=mask,
     )

@@ -2,15 +2,20 @@
 
 import numpy as np
 from swiftsimio.accelerated import jit, prange, NUM_THREADS
+from swiftsimio.visualisation.kernels import (
+    kernel_shape,
+    kernel_gamma_3d as kernel_gammas,
+    kernel_constant_3d as kernel_constants,
+)
 
 
-# Taken from Dehnen & Aly 2012
+# Taken from Dehnen & Aly 2012; these are the Wendland-C2 (default) values.
 kernel_gamma = 1.936492
 kernel_constant = 21.0 * 0.31830988618379067154 / 2.0
 
 
 @jit(nopython=True, fastmath=True)
-def kernel(r: float | np.float32, H: float | np.float32) -> float:
+def kernel(r: float | np.float32, H: float | np.float32, kernel_id: int = 0) -> float:
     """
     Kernel implementation for swiftsimio.
 
@@ -22,6 +27,10 @@ def kernel(r: float | np.float32, H: float | np.float32) -> float:
     H : float or np.float32
         Kernel width (i.e. radius of compact support of kernel).
 
+    kernel_id : int
+        Index of the kernel in :data:`swiftsimio.visualisation.kernels.kernel_names`.
+        Defaults to ``0`` (Wendland-C2).
+
     Returns
     -------
     float
@@ -29,23 +38,22 @@ def kernel(r: float | np.float32, H: float | np.float32) -> float:
 
     Notes
     -----
-    Swiftsimio uses the Wendland-C2 kernel as described in [1]_.
+    This is the 3D form of the kernel selected by ``kernel_id``. Swiftsimio
+    defaults to the Wendland-C2 kernel as described in [1]_.
 
     References
     ----------
     .. [1] Dehnen W., Aly H., 2012, MNRAS, 425, 1068
     """
+    kernel_constant = kernel_constants[kernel_id]
+
     inverse_H = 1.0 / H
     ratio = r * inverse_H
 
     kernel = 0.0
 
     if ratio < 1.0:
-        one_minus_ratio = 1.0 - ratio
-        one_minus_ratio_2 = one_minus_ratio * one_minus_ratio
-        one_minus_ratio_4 = one_minus_ratio_2 * one_minus_ratio_2
-
-        kernel = max(one_minus_ratio_4 * (1.0 + 4.0 * ratio), 0.0)
+        kernel = kernel_shape(ratio, kernel_id)
 
         kernel *= kernel_constant * inverse_H * inverse_H * inverse_H
 
@@ -65,6 +73,7 @@ def slice_scatter(
     box_x: np.float64 = 0.0,
     box_y: np.float64 = 0.0,
     box_z: np.float64 = 0.0,
+    kernel_id: int = 0,
 ) -> np.ndarray:
     """
     Create a 2D image slice through a volume.
@@ -100,6 +109,11 @@ def slice_scatter(
         Box size in z, in the same rescaled length units as x, y and z.
         Used for periodic wrapping.
 
+    kernel_id : int
+        Index of the SPH kernel to use, see
+        :data:`swiftsimio.visualisation.kernels.kernel_names`. Defaults to
+        ``0`` (Wendland-C2).
+
     Returns
     -------
     np.ndarray of np.float32
@@ -122,6 +136,8 @@ def slice_scatter(
     for a 25-50% performance improvement. In our testing, using numpy
     floats and integers is also an improvement over using the numba ones.
     """
+    kernel_gamma = kernel_gammas[kernel_id]
+
     # Output array for our image
     res = int(max(xres, yres))
     image = np.zeros((res, res), dtype=np.float32)
@@ -222,7 +238,7 @@ def slice_scatter(
 
                             r = np.sqrt(distance_x_2 + distance_y_2 + distance_z_2)
 
-                            kernel_eval = kernel(r, kernel_width)
+                            kernel_eval = kernel(r, kernel_width, kernel_id)
 
                             image[cell_x, cell_y] += mass * kernel_eval
 
@@ -243,6 +259,7 @@ def slice_scatter_parallel(
     box_x: np.float64 = 0.0,
     box_y: np.float64 = 0.0,
     box_z: np.float64 = 0.0,
+    kernel_id: int = 0,
 ) -> np.ndarray:
     """
     Parallel implementation of slice_scatter.
@@ -287,6 +304,11 @@ def slice_scatter_parallel(
     box_z : np.float64
         Box size in z, in the same rescaled length units as x, y and z.
         Used for periodic wrapping.
+
+    kernel_id : int
+        Index of the SPH kernel to use, see
+        :data:`swiftsimio.visualisation.kernels.kernel_names`. Defaults to
+        ``0`` (Wendland-C2).
 
     Returns
     -------
@@ -342,6 +364,7 @@ def slice_scatter_parallel(
             box_x=box_x,
             box_y=box_y,
             box_z=box_z,
+            kernel_id=kernel_id,
         )
 
     return output
