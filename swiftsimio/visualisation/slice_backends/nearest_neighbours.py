@@ -4,7 +4,69 @@ import numpy as np
 
 from numba import config, get_num_threads, set_num_threads
 
-from swiftsimio.visualisation._kdtree import nearest_particles
+from swiftsimio.optional_packages import KDTree, TREE_AVAILABLE
+from swiftsimio.visualisation.kdtree import nearest_particles
+
+
+def build_tree(
+    x: np.float64,
+    y: np.float64,
+    z: np.float64,
+    box_x: float,
+    box_y: float,
+    box_z: float,
+) -> KDTree:
+    """
+    Build the tree used for the nearest-neighbour calculations.
+
+    In the periodic case, we must make sure that all particle coordinates
+    fall inside the box.
+
+    Parameters
+    ----------
+    x : array of float64
+        The x-positions of the particles. Must be bounded by [0, 1].
+
+    y : array of float64
+        The y-positions of the particles. Must be bounded by [0, 1].
+
+    z : array of float64
+        The z-positions of the particles. Must be bounded by [0, 1].
+
+    box_x : float
+        Box size in x, in the same rescaled length units as x, y and z.
+        Used for periodic wrapping (if not 0).
+
+    box_y : float
+        Box size in y, in the same rescaled length units as x, y and z.
+        Used for periodic wrapping (if not 0).
+
+    box_z : float
+        Box size in z, in the same rescaled length units as x, y and z.
+        Used for periodic wrapping (if not 0).
+
+    Returns
+    -------
+    KDTree
+        A KD-tree built from the particle positions.
+    """
+    if not TREE_AVAILABLE:
+        raise ImportError(
+            "The scipy.spatial.cKDTree class is required to use the "
+            "'nearest_neighbours' slice backend."
+        )
+    if box_x != 0 or box_y != 0 or box_z != 0:
+        if box_x != 0:
+            x %= box_x
+        if box_y != 0:
+            y %= box_y
+        if box_z != 0:
+            z %= box_z
+        data = np.stack((x, y, z), axis=1)
+        return KDTree(data, boxsize=[box_x, box_y, box_z])
+    else:
+        data = np.stack((x, y, z), axis=1)
+        return KDTree(data)
 
 
 def slice_scatter(

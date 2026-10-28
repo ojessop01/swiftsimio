@@ -8,7 +8,7 @@ that do not usually carry a smoothing length field (e.g. dark matter).
 import numpy as np
 from swiftsimio import cosmo_array
 from swiftsimio._array_functions import _propagate_cosmo_array_attributes_to_result
-from swiftsimio.visualisation._kdtree import k_nearest_distances
+from swiftsimio.visualisation.kdtree import k_nearest_distances
 
 
 @_propagate_cosmo_array_attributes_to_result  # copies attrs of first arg to result

@@ -2,9 +2,11 @@
 Nearest-neighbour searches with a parallel k-d tree.
 
 Two searches, both exact (the same as ``scipy.spatial.cKDTree.query``):
-:func:`k_nearest_distances` finds the distance from every particle to its k-th
-nearest neighbour (for smoothing lengths), and :func:`nearest_particles` the
-particle nearest to each of a set of points (for nearest-neighbour images).
+
++ :func:`~swiftsimio.visualisation.kdtree.k_nearest_distances` finds the distance
+  from every particle to its k-th nearest neighbour (for smoothing lengths);
++ :func:`~swiftsimio.visualisation.kdtree.nearest_particles` finds the particle
+  nearest to each of a set of points (for nearest-neighbour images).
 
 Notes
 -----
@@ -12,8 +14,9 @@ The tree is balanced (each node splits its particles in half at the median of
 its widest axis), so it is stored implicitly: node ``i`` has children
 ``2i + 1`` and ``2i + 2``, and every node is a contiguous range of the permuted
 particles. It is built level by level, the nodes of a level in parallel, and
-the coordinates are copied in tree order (one array per axis) so that leaf
-scans read memory sequentially and vectorise.
+the coordinates are copied in tree order (one array per axis) so that the
+loops over the particles of a leaf read memory in order, and the compiler can
+process several particles at once.
 
 Queries go a leaf at a time, in groups of ``LEAF_GROUP`` neighbouring leaves
 interleaved between threads (so that each thread gets its share of the dense
@@ -24,9 +27,10 @@ distance moved, ``|d_k(q) - d_k(a)| <= |q - a|``, so
 distance of the nearest solved particle is also a guess at ``d_k(q)``. The
 first particle of a group is found from scratch.
 
-For :func:`nearest_particles` the query points go in chunks of consecutive
-points (as the pixels along a row of an image), and each search starts from the
-particle nearest to the point before, whose distance bounds the nearest.
+For :func:`~swiftsimio.visualisation.kdtree.nearest_particles` the query points
+go in chunks of consecutive points (as the pixels along a row of an image), and
+each search starts from the particle nearest to the point before, whose distance
+bounds the nearest.
 
 Up to ``k = HEAP_K`` the k-th distance is found with a max-heap of the ``k``
 nearest squared distances, searching only below the upper bound. Above it the
@@ -65,9 +69,10 @@ LEAF_GROUP = 8
 # the nearest particle to the point before it) for nearest_particles
 QUERY_CHUNK = 256
 # The period of an axis that is not periodic: huge but finite, so that the
-# minimum-image fold min(|dx|, period - |dx|) is |dx| (see _separation)
+# periodic separation min(|dx|, period - |dx|) is |dx| (see _separation)
 FREE_AXIS = 1e300
-# fastmath without "nnan" and "ninf": the searches rely on inf
+# Floating-point optimisations for numba, except those that assume there are no
+# NaNs or infinities ("nnan" and "ninf"): the searches use inf for "no bound yet"
 FASTMATH = {"nsz", "arcp", "contract", "afn", "reassoc"}
 
 
@@ -288,8 +293,9 @@ def _separation(dx: float, period: NDArray[np.float64], d: int) -> float:
     Compute the minimum-image separation along an axis.
 
     For coordinates wrapped into ``[0, period[d])`` this is
-    ``min(|dx|, period[d] - |dx|)``: two branch-free operations, so leaf loops
-    still vectorise. On a free axis (period ``FREE_AXIS``) it is ``|dx|``.
+    ``min(|dx|, period[d] - |dx|)``, written without an ``if`` so that the loops
+    over a leaf's particles can still process several at once. On a free axis
+    (period ``FREE_AXIS``) it is ``|dx|``.
 
     Parameters
     ----------
@@ -576,7 +582,8 @@ def _heap_query(
         if node >= first_leaf:
             start = lo[node]
             n = hi[node] - start
-            # Vectorised: all the leaf's squared distances, then their minimum
+            # All the leaf's squared distances first, then their minimum: two
+            # simple loops, which the compiler can run on several particles at once
             nearest = np.inf
             for j in range(n):
                 dx = _separation(xs[start + j] - qx, period, 0)
@@ -733,7 +740,7 @@ def _count_within(
             count += hi[node] - lo[node]
             continue
         if node >= first_leaf:
-            # Branch-free, so it vectorises
+            # Without an if, so the compiler can test several particles at once
             inside = 0
             for j in range(lo[node], hi[node]):
                 dx = _separation(xs[j] - qx, period, 0)
@@ -1049,7 +1056,8 @@ def _shell(
             dy = _separation(ys[i] - qy, period, 1)
             dz = _separation(zs[i] - qz, period, 2)
             d2 = dx * dx + dy * dy + dz * dz
-            # Branch-free: d2 is kept only if in the shell
+            # Without an if (as in _count_within): d2 is always written, but only
+            # kept (by moving on to the next slot) if it is in the shell
             inside += d2 <= r2_lo
             buffer[m] = d2
             m += (d2 > r2_lo) & (d2 <= r2_hi)
@@ -1597,7 +1605,8 @@ def _nearest_query(
         if node >= first_leaf:
             start = lo[node]
             n = hi[node] - start
-            # Vectorised: all the leaf's squared distances, then their minimum
+            # All the leaf's squared distances first, then their minimum: two
+            # simple loops, which the compiler can run on several particles at once
             nearest = np.inf
             for j in range(n):
                 dx = _separation(xs[start + j] - qx, period, 0)
@@ -1752,7 +1761,7 @@ def _periodic_cut(x: NDArray[np.float64], period: float, bins: int = 4096) -> fl
     period : float
         Period of the axis.
     bins : int, optional
-        Number of bins of the histogram.
+        Number of bins of the histogram. Default is ``4096``.
 
     Returns
     -------
@@ -1810,7 +1819,7 @@ def _shift_into_frame(
     Shift the particles (and query points) into the frame the tree is built in.
 
     On periodic axes the coordinates are wrapped into ``[0, period)``, which the
-    minimum-image fold needs, with the boundary moved into the widest gap
+    periodic separation ``min(|dx|, period - |dx|)`` needs, with the boundary moved into the widest gap
     between particles (distances do not change); on free axes they are centred,
     for the precision of the distances. A periodic axis along which all the
     points are within half a period of each other becomes free, as no distance
@@ -1824,7 +1833,8 @@ def _shift_into_frame(
     boxsize : float or NDArray[np.floating] or None
         Period of each axis (``None``, or a period ``<= 0``, for a free axis).
     queries : NDArray[np.float64], optional
-        Query points, shape ``(M, 3)``, shifted with the particles.
+        Query points, shape ``(M, 3)``, shifted with the particles. Default is
+        ``None``.
 
     Returns
     -------
@@ -1885,11 +1895,11 @@ def k_nearest_distances(
         The neighbour to find.
     boxsize : float or NDArray[np.floating] or None, optional
         Periodic box: distances are minimum-image distances along every axis
-        with a positive period (the coordinates are wrapped into it). ``None``
-        (default), or a period ``<= 0``, leaves that axis non-periodic.
+        with a positive period (the coordinates are wrapped into it). ``None``,
+        or a period ``<= 0``, leaves that axis non-periodic. Default is ``None``.
     heap_k : int, optional
         Largest ``k`` searched for with a heap (larger ``k`` are selected from
-        shells); for testing.
+        shells); for testing. Default is ``HEAP_K`` (96).
 
     Returns
     -------
@@ -1931,8 +1941,8 @@ def nearest_particles(
         Query points, shape ``(M, 3)``.
     boxsize : float or NDArray[np.floating] or None, optional
         Periodic box: distances are minimum-image distances along every axis
-        with a positive period (the coordinates are wrapped into it). ``None``
-        (default), or a period ``<= 0``, leaves that axis non-periodic.
+        with a positive period (the coordinates are wrapped into it). ``None``,
+        or a period ``<= 0``, leaves that axis non-periodic. Default is ``None``.
 
     Returns
     -------
